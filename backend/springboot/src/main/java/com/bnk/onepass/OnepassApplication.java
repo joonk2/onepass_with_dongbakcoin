@@ -1,3 +1,5 @@
+// springboot 실행
+
 package com.bnk.onepass;
 
 import org.springframework.boot.SpringApplication;
