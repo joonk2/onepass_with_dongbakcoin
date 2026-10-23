@@ -1,5 +1,0 @@
-// 서버 포트·Python API 주소
-
-spring:
-  application:
-    name: onepass

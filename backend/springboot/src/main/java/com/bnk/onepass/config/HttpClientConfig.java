@@ -1,1 +1,0 @@
-// Python 서비스 HTTP 통신 설정
