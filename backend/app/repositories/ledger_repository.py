@@ -13,6 +13,9 @@ class LedgerRepository:
     def __init__(self, db: Session):
         self.db = db
 
+
+
+
     def get_ledger_by_id(
         self,
         ledger_id: int,
@@ -24,6 +27,10 @@ class LedgerRepository:
         )
 
         return self.db.scalar(statement)
+
+
+
+
 
     def get_ledgers_by_user_id(
         self,
@@ -47,6 +54,10 @@ class LedgerRepository:
 
         return list(self.db.scalars(statement).all())
 
+
+
+
+
     def get_ledgers_by_tx_id(
         self,
         tx_id: str,
@@ -63,6 +74,9 @@ class LedgerRepository:
         )
 
         return list(self.db.scalars(statement).all())
+
+
+
 
     def get_ledgers_by_request_id(
         self,
@@ -81,6 +95,9 @@ class LedgerRepository:
         )
 
         return list(self.db.scalars(statement).all())
+
+
+
 
     def get_ledgers_by_user_card_id(
         self,
@@ -104,6 +121,10 @@ class LedgerRepository:
 
         return list(self.db.scalars(statement).all())
 
+
+
+
+
     def get_ledgers_by_event_type(
         self,
         event_type: str,
@@ -125,6 +146,11 @@ class LedgerRepository:
         )
 
         return list(self.db.scalars(statement).all())
+
+
+
+
+
 
     def get_ledgers_by_user_and_period(
         self,
@@ -150,6 +176,10 @@ class LedgerRepository:
 
         return list(self.db.scalars(statement).all())
 
+
+
+
+
     def get_ledgers_by_merchant_id(
         self,
         merchant_id: str,
@@ -171,3 +201,15 @@ class LedgerRepository:
         )
 
         return list(self.db.scalars(statement).all())
+
+
+
+    # -- 거래 원장 이벤트를 DB 세션에 추가 ------
+    def create_ledger(
+        self,
+        ledger: Ledger,
+    ) -> Ledger:
+        self.db.add(ledger)
+        self.db.flush()
+
+        return ledger
