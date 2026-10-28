@@ -6,7 +6,7 @@ from app.api.dependencies import get_db
 
 
 router = APIRouter(
-    prefix="/api/health",
+    prefix="/health",
     tags=["Health"],
 )
 
