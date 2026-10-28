@@ -49,19 +49,25 @@ class CardRepository:
 
         return self.db.scalar(statement)
 
+
+    # 특정 사용자의 활성 카드 조회 (삭제된 카드가 목록에 나오지않게)
     def get_user_cards(
         self,
         user_id: str,
     ) -> list[UserCard]:
-        """특정 사용자의 보유 카드 조회"""
+        """특정 사용자의 활성 카드 조회"""
 
         statement = (
             select(UserCard)
-            .where(UserCard.user_id == user_id)
+            .where(
+                UserCard.user_id == user_id,
+                UserCard.card_status == "ACTIVE"
+            )
             .order_by(UserCard.user_card_id)
         )
-
         return list(self.db.scalars(statement).all())
+
+
 
     def get_month_close(
         self,
@@ -94,3 +100,58 @@ class CardRepository:
         )
 
         return list(self.db.scalars(statement).all())
+
+
+
+
+    # --------- 사용자 카드 삭제 ------------
+    def deactivate_user_card(
+        self,
+        user_card: UserCard,
+    ) -> UserCard:
+        """등록된 사용자 카드 삭제"""
+
+        user_card.card_status = "INACTIVE"
+
+        self.db.add(user_card)
+        self.db.commit()
+        self.db.refresh(user_card)
+
+        return user_card
+
+
+
+
+    # --------- 사용자 카드 등록 ------------
+    def create_user_card(
+        self,
+        user_card: UserCard,
+    ) -> UserCard:
+        """사용자 보유 카드 DB 저장"""
+
+        self.db.add(user_card)
+        self.db.commit()
+        self.db.refresh(user_card)
+
+        return user_card
+
+
+
+
+    # --------- 사용자 카드 우선순위 설정 ------------
+    def update_card_priorities(
+        self,
+        cards: list[UserCard],
+        priorities: dict[str, int],
+    ) -> list[UserCard]:
+        """사용자 카드 우선순위를 한 번에 저장"""
+
+        for card in cards:
+            card.default_preference_rank = priorities[card.user_card_id]
+
+        self.db.commit()
+
+        for card in cards:
+            self.db.refresh(card)
+
+        return cards
