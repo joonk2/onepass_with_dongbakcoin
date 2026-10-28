@@ -1,12 +1,13 @@
 
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import Session
-
 from app.db_entities.category_entity import (
     BenefitCategoryMap,
     UserCategory,
     UserCategoryPriority,
 )
+
+
 
 
 class CategoryRepository:
@@ -144,3 +145,32 @@ class CategoryRepository:
         )
 
         return self.db.scalar(statement)
+
+
+
+    # --------- 카테고리별 카드 우선순위 저장 ------------
+    def replace_user_category_priorities(
+        self,
+        user_id: str,
+        priorities: list[UserCategoryPriority],
+    ) -> list[UserCategoryPriority]:
+        """사용자의 카테고리별 카드 우선순위 전체 교체"""
+
+        statement = delete(UserCategoryPriority).where(
+            UserCategoryPriority.user_id == user_id
+        )
+
+        try:
+            self.db.execute(statement)
+
+            self.db.add_all(priorities)
+            self.db.commit()
+
+            for priority in priorities:
+                self.db.refresh(priority)
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+        return priorities
