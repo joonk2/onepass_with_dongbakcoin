@@ -45,3 +45,64 @@
 .api-report-summary .report-ring { width: 88px; height: 88px; }
 .api-report-summary .report-ring b { font-size: 12px; }
 .history-list { padding: 4px 16px; }
+
+/* QR 결제 화면 */
+.qr-pay-merchant { background: linear-gradient(135deg, #fff0f3, #eaf3ff); border-radius: 22px; padding: 22px 18px; text-align: center; }
+.qr-pay-merchant span { display: block; color: var(--muted); font-size: 12px; }
+.qr-pay-merchant strong { display: block; margin: 8px 0 4px; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
+.qr-pay-merchant small { color: var(--muted); font-size: 11px; }
+.qr-pay-screen .amount-input input { font-size: 22px; font-weight: 800; min-width: 0; }
+.quick-amounts { display: flex; gap: 8px; margin: 10px 0 14px; }
+.quick-amounts button { flex: 1; padding: 10px 4px; border-radius: 12px; background: #f2f4f6; color: #4e5968; font-size: 12px; font-weight: 700; }
+.quick-amounts button:disabled { opacity: .5; }
+.qr-pay-screen .recommend .candidate-select { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 4px 0; border-radius: 0; background: transparent; color: inherit; text-align: left; font-weight: 400; }
+.qr-pay-screen .recommend .candidate-select:disabled { opacity: .45; }
+.qr-pay-screen .recommend .candidate-select > strong { float: none; flex-shrink: 0; color: var(--pink); font-size: 11px; }
+.benefit-comparison-list li.selectable.selected { background: #fff7f9; border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.qr-pay-submit { display: flex; width: 100%; align-items: center; justify-content: center; gap: 8px; margin-top: 14px; padding: 16px; border-radius: 14px; background: var(--blue); color: #fff; font-size: 16px; font-weight: 800; }
+.qr-pay-submit:disabled { opacity: .5; cursor: not-allowed; }
+.payment-result-banner { margin: 10px 0; padding: 16px; border-radius: 18px; background: #edf9f5; border: 1px solid #c7ecdf; color: #14624f; }
+.payment-result-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.payment-result-head b { font-size: 13px; }
+.payment-result-head button { background: transparent; color: #14624f; padding: 4px; }
+.payment-result-banner dl { margin: 10px 0 0; display: grid; gap: 7px; }
+.payment-result-banner dl > div { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; }
+.payment-result-banner dt { color: #4b8f7d; }
+.payment-result-banner dd { margin: 0; font-weight: 700; text-align: right; overflow-wrap: anywhere; }
+.payment-result-banner .highlight { padding-top: 8px; border-top: 1px dashed #a9dccb; font-size: 14px; }
+.payment-result-banner .highlight dd { color: var(--pink); font-size: 16px; }
+.recent-payment .recent-cashback { color: var(--pink); font-weight: 700; }
+
+/* 내 카드 캐러셀 */
+.card-carousel { margin: 4px 0 14px; }
+.carousel-track { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; border-radius: 18px; }
+.carousel-track::-webkit-scrollbar { display: none; }
+.carousel-slide { flex: 0 0 100%; scroll-snap-align: center; }
+.carousel-card { position: relative; width: 100%; overflow: hidden; border-radius: 18px; isolation: isolate; }
+.carousel-card.plain { aspect-ratio: 1.59; display: flex; flex-direction: column; justify-content: space-between; padding: 20px; color: #fff; box-shadow: 0 8px 16px #2222; }
+.carousel-card.plain strong { font-size: 20px; line-height: 1.3; overflow-wrap: anywhere; }
+.plain-issuer { font-size: 12px; font-weight: 700; opacity: .9; }
+.plain-holder { font-size: 12px; opacity: .85; }
+.tone-0 { background: linear-gradient(135deg, #3182f6, #1b64da); }
+.tone-1 { background: linear-gradient(135deg, #20c997, #12805f); }
+.tone-2 { background: linear-gradient(135deg, #ff922b, #e8590c); }
+.tone-3 { background: linear-gradient(135deg, #f06595, #c2255c); }
+.carousel-nav { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 10px; }
+.carousel-nav > button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #fff; color: #4e5968; }
+.carousel-nav > button:disabled { opacity: .35; }
+.carousel-dots { display: flex; gap: 7px; }
+.carousel-dots button { width: 8px; height: 8px; padding: 0; border-radius: 50%; background: #c9d0d8; }
+.carousel-dots button.on { width: 20px; border-radius: 6px; background: var(--blue); }
+.card-detail-panel { background: #fff; border-radius: 20px; padding: 18px; }
+.card-detail-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.card-detail-panel > header b { display: block; font-size: 16px; line-height: 1.3; }
+.card-detail-panel > header small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.card-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 14px 0 0; }
+.card-stats > div { background: #f6f8fa; border-radius: 12px; padding: 10px 12px; }
+.card-stats dt { color: var(--muted); font-size: 11px; }
+.card-stats dd { margin: 4px 0 0; font-size: 15px; font-weight: 800; }
+.card-detail-panel .list-label { margin: 18px 0 8px; }
+.card-benefits.readable { gap: 8px; }
+.card-benefits.readable li { border-left: 3px solid var(--blue); background: #f6f8fa; border-radius: 0 10px 10px 0; padding: 9px 12px; }
+.card-benefits.readable li > b { display: block; font-size: 13px; line-height: 1.4; color: #1e2733; }
+.card-benefits.readable li > small { display: block; margin-top: 3px; font-size: 12px; color: var(--muted); }

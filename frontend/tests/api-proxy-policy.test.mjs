@@ -3,7 +3,7 @@ import test from 'node:test'
 import { api, ApiError } from '../lib/api.ts'
 import { resolveApiRoute } from '../lib/api/route-policy.ts'
 import { proxyApiRequest } from '../lib/api/server-client.ts'
-import { resolveQrMerchant } from '../lib/qr-payment.ts'
+import { buildMerchantPayUrl, merchantIdFromSearch, resolveQrMerchant } from '../lib/qr-payment.ts'
 
 test('allows frontend user, wallet, card, benefit, merchant, and payment API operations', () => {
   const cases = [
@@ -60,6 +60,18 @@ test('resolves only known merchants from supported demo QR payloads', () => {
   )
   assert.equal(resolveQrMerchant('MERCHANT_UNKNOWN', merchants), null)
   assert.equal(resolveQrMerchant('https://example.com/?merchant_id=MERCHANT_001', merchants), null)
+  assert.equal(
+    resolveQrMerchant('https://onepass.example.com/pay?merchant_id=MERCHANT_001', merchants),
+    merchants[0],
+  )
+  assert.equal(resolveQrMerchant('https://onepass.example.com/pay', merchants), null)
+})
+
+test('builds a QR pay URL that carries only the merchant id', () => {
+  const url = buildMerchantPayUrl('https://onepass.example.com', 'M00002')
+  assert.equal(url, 'https://onepass.example.com/pay?merchant_id=M00002')
+  assert.equal(merchantIdFromSearch(new URL(url).search), 'M00002')
+  assert.equal(merchantIdFromSearch(''), null)
 })
 
 test('forwards a validated bearer token to the authenticated backend', async (t) => {

@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   BarChart3,
   Bell,
+  ChevronLeft,
   ChevronRight,
   CreditCard,
   Grid2X2,
@@ -41,10 +42,26 @@ import {
   type UserProfile,
   type WalletBalance,
 } from '@/lib/api'
-import { resolveQrMerchant } from '@/lib/qr-payment'
+import { merchantIdFromSearch, resolveQrMerchant } from '@/lib/qr-payment'
 
-type Screen = 'home' | 'card' | 'manage' | 'platform' | 'recharge' | 'report' | 'qr-scan' | 'api-tools'
+type Screen = 'home' | 'card' | 'manage' | 'platform' | 'recharge' | 'report' | 'qr-scan' | 'qr-pay' | 'api-tools'
 type EntryScreen = 'welcome' | 'auth'
+
+type PaymentSummary = {
+  txId: string
+  merchantName: string
+  amountWon: number
+  productName: string | null
+  expectedBenefitWon: number
+  awardedBenefitWon: number | null
+  balanceBeforeWon: number | null
+  paidAt: string
+}
+
+const newRequestId = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `req-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
 
 const quickLinks = [
   { label: '동백+', icon: Sparkles, tone: 'pink' },
@@ -133,11 +150,18 @@ export default function OnePassDashboard() {
   const cardActionsInFlight = useRef(new Set<string>())
   const [qrMerchantId, setQrMerchantId] = useState('')
   const [qrScanError, setQrScanError] = useState('')
+  const [lastPayment, setLastPayment] = useState<PaymentSummary | null>(null)
   const userId = authSession?.user.user_id
 
   useEffect(() => {
     setAuthSession(readAuthSession())
     setAuthReady(true)
+    const deepLinkMerchantId = merchantIdFromSearch(window.location.search)
+    if (deepLinkMerchantId) {
+      setQrMerchantId(deepLinkMerchantId)
+      setScreen('qr-pay')
+      setEntryScreen('auth')
+    }
   }, [])
 
   useEffect(() => {
@@ -357,6 +381,18 @@ export default function OnePassDashboard() {
     return result
   }
 
+  const leaveQrPay = () => {
+    setQrMerchantId('')
+    window.history.replaceState(null, '', '/')
+    setScreen('home')
+  }
+
+  const handleQrPaid = async (summary: PaymentSummary) => {
+    setLastPayment(summary)
+    await loadData()
+    leaveQrPay()
+  }
+
   const handleAuthenticated = (session: AuthSession) => {
     writeAuthSession(session)
     setAuthSession(session)
@@ -378,6 +414,7 @@ export default function OnePassDashboard() {
       writeAuthSession(null)
       setAuthSession(null)
       setScreen('home')
+      setLastPayment(null)
       setEntryScreen('welcome')
       setLoading(false)
     }
@@ -441,7 +478,9 @@ export default function OnePassDashboard() {
                 walletError={walletError}
                 payments={approvedPayments}
                 dongbaekProduct={dongbaekProduct}
-                onOpenCard={() => { setQrMerchantId(''); setScreen('card') }}
+                lastPayment={lastPayment}
+                onDismissLastPayment={() => setLastPayment(null)}
+                onOpenCard={() => setScreen('manage')}
                 onOpenQr={() => { setQrScanError(''); setScreen('qr-scan') }}
                 onOpenRecharge={() => setScreen('recharge')}
                 onOpenReport={() => setScreen('report')}
@@ -467,6 +506,7 @@ export default function OnePassDashboard() {
                 payments={approvedPayments}
                 benefits={benefits}
                 displayName={profile?.display_name ?? null}
+                wallet={wallet}
                 pendingCard={pendingCard}
                 actionMessage={cardActionMessage}
                 onBack={() => setScreen('home')}
@@ -498,8 +538,19 @@ export default function OnePassDashboard() {
                   }
                   setQrMerchantId(merchant.merchant_id)
                   setQrScanError('')
-                  setScreen('card')
+                  setScreen('qr-pay')
                 }}
+              />
+            )}
+            {screen === 'qr-pay' && (
+              <QrPayScreen
+                userId={authSession.user.user_id}
+                merchantId={qrMerchantId}
+                merchants={merchants}
+                userCards={activeCards}
+                wallet={wallet}
+                onBack={leaveQrPay}
+                onPaid={handleQrPaid}
               />
             )}
             {screen === 'recharge' && (
@@ -661,6 +712,8 @@ function HomeScreen({
   walletError,
   payments,
   dongbaekProduct,
+  lastPayment,
+  onDismissLastPayment,
   onOpenCard,
   onOpenQr,
   onOpenRecharge,
@@ -672,6 +725,8 @@ function HomeScreen({
   walletError: string
   payments: PaymentRecord[]
   dongbaekProduct: CardProduct | null
+  lastPayment: PaymentSummary | null
+  onDismissLastPayment: () => void
   onOpenCard: () => void
   onOpenQr: () => void
   onOpenRecharge: () => void
@@ -687,7 +742,7 @@ function HomeScreen({
         <strong>{userName ?? '프로필 정보 미등록'}</strong>
         <div className="user-actions"><Bell size={18} /><button onClick={onOpenMenu} aria-label="메뉴"><Menu size={20} /></button></div>
       </div>
-      <button className="home-balance-card" onClick={onOpenCard} aria-label="카드 및 잔액 정보">
+      <button className="home-balance-card" onClick={onOpenCard} aria-label="내 카드 보기">
         <DongiImage
           variant="big"
           alt="동이 캐릭터가 그려진 OnePass 카드"
@@ -701,6 +756,32 @@ function HomeScreen({
           <span className="home-balance-summary">{payments.length}건 결제 · {formatWon(total)}</span>
         </span>
       </button>
+      {lastPayment && (
+        <section className="payment-result-banner" role="status" aria-live="polite">
+          <div className="payment-result-head">
+            <b>결제가 완료되었습니다 (시연용 모의결제)</b>
+            <button type="button" onClick={onDismissLastPayment} aria-label="결제 결과 닫기"><X size={15} /></button>
+          </div>
+          <dl>
+            <div><dt>가맹점</dt><dd>{lastPayment.merchantName}</dd></div>
+            <div><dt>결제 금액</dt><dd>{formatWon(lastPayment.amountWon)}</dd></div>
+            <div><dt>결제 카드</dt><dd>{lastPayment.productName ?? '-'}</dd></div>
+            <div>
+              <dt>동백전 잔액</dt>
+              <dd>
+                {lastPayment.balanceBeforeWon !== null && wallet
+                  ? `${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(wallet.balance_won)}`
+                  : wallet ? formatWon(wallet.balance_won) : '확인 불가'}
+              </dd>
+            </div>
+            <div><dt>예상 혜택 (결제 전 추정)</dt><dd>{formatWon(lastPayment.expectedBenefitWon)}</dd></div>
+            <div className="highlight">
+              <dt>받은 캐시백 (실제 지급)</dt>
+              <dd>{lastPayment.awardedBenefitWon === null ? '확인 중' : formatWon(lastPayment.awardedBenefitWon)}</dd>
+            </div>
+          </dl>
+        </section>
+      )}
       <button className="qr-pay-button" onClick={onOpenQr}>
         <QrCode size={30} />
         <span><b>QR 결제</b><small>카메라로 가맹점 QR을 스캔하세요</small></span>
@@ -711,7 +792,6 @@ function HomeScreen({
       <section className="walk-card"><div><b>조금 더 걸어볼까요?</b><br /><span>산책이라도 나설까요?</span><small>걷기사용 · 오늘의 걸음은 연결 후 표시됩니다</small></div><span className="walk-icon">◜◡◝</span></section>
       <div className="bento">
         <button onClick={onOpenMenu}><b>MY 플랫폼</b><span>내 정보를<br />한번에 확인하세요!</span><small>› 내정보 관리</small></button>
-        <button onClick={onOpenCard}><b>원패스 카드</b><span>내 카드와 혜택을 확인해요</span></button>
         <button onClick={onOpenReport}><b>월별 사용 리포트</b><span>결제 이용 내역을 확인해요</span></button>
       </div>
       <div className="quick-grid">{quickLinks.map(({ label, icon: Icon, tone }) => <button key={label} type="button" disabled><span className={`quick-icon ${tone}`}><Icon size={17} /></span><b>{label}</b></button>)}</div>
@@ -719,7 +799,13 @@ function HomeScreen({
         <div className="chart-heading"><div><b>최근 결제 내역</b><small>최근 승인된 결제 정보</small></div><button onClick={onOpenReport}>전체 보기 ›</button></div>
         {recent ? (
           <div className="recent-payment">
-            <div><b>{recent.merchant_name ?? '가맹점'}</b><small>{recent.product_name ?? '카드'} · {new Date(recent.event_at).toLocaleDateString('ko-KR')}</small></div>
+            <div>
+              <b>{recent.merchant_name ?? '가맹점'}</b>
+              <small>{recent.product_name ?? '카드'} · {new Date(recent.event_at).toLocaleDateString('ko-KR')}</small>
+              {(recent.awarded_benefit_won ?? 0) > 0 && (
+                <small className="recent-cashback">받은 캐시백 +{formatWon(recent.awarded_benefit_won ?? 0)}</small>
+              )}
+            </div>
             <strong>{formatWon(recent.amount_won)}</strong>
           </div>
         ) : <p className="empty-state">표시할 결제 이력이 없습니다.</p>}
@@ -890,12 +976,97 @@ function CardDetail({
   )
 }
 
+type CardSlide = {
+  key: string
+  title: string
+  issuer: string
+  holder: string | null
+  isDongi: boolean
+  balanceWon?: number | null
+  tone?: number
+  card?: UserCard
+  product?: CardProduct
+  rules: BenefitRule[]
+}
+
+function CardCarousel({
+  slides,
+  activeIndex,
+  onChange,
+}: {
+  slides: CardSlide[]
+  activeIndex: number
+  onChange: (index: number) => void
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+  const goTo = (index: number) => {
+    const track = trackRef.current
+    if (!track) return
+    track.scrollTo({ left: index * track.clientWidth, behavior: 'smooth' })
+    onChange(index)
+  }
+  return (
+    <section className="card-carousel" aria-label="내 보유 카드">
+      <div
+        className="carousel-track"
+        ref={trackRef}
+        onScroll={(event) => {
+          const track = event.currentTarget
+          const index = Math.round(track.scrollLeft / Math.max(track.clientWidth, 1))
+          if (index !== activeIndex) onChange(index)
+        }}
+      >
+        {slides.map((slide) => (
+          <div className="carousel-slide" key={slide.key}>
+            {slide.isDongi ? (
+              <div className="carousel-card dongi">
+                <DongiImage variant="big" alt="동이 캐릭터 동백전 카드" className="home-balance-image" priority />
+                <span className="home-balance-overlay">
+                  <span className="home-balance-card-name">{slide.title}</span>
+                  <span className="home-balance-label">사용 가능 잔액</span>
+                  <strong>{slide.balanceWon != null ? formatWon(slide.balanceWon) : '잔액 확인 불가'}</strong>
+                </span>
+              </div>
+            ) : (
+              <div className={`carousel-card plain tone-${slide.tone ?? 0}`}>
+                <span className="plain-issuer">{slide.issuer}</span>
+                <strong>{slide.title}</strong>
+                <span className="plain-holder">{slide.holder ?? '프로필 정보 미등록'}</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {slides.length > 1 && (
+        <div className="carousel-nav">
+          <button type="button" aria-label="이전 카드" disabled={activeIndex <= 0} onClick={() => goTo(activeIndex - 1)}><ChevronLeft size={18} /></button>
+          <div className="carousel-dots" role="tablist">
+            {slides.map((slide, index) => (
+              <button
+                key={slide.key}
+                type="button"
+                role="tab"
+                aria-selected={index === activeIndex}
+                aria-label={`${index + 1}번째 카드: ${slide.title}`}
+                className={index === activeIndex ? 'on' : ''}
+                onClick={() => goTo(index)}
+              />
+            ))}
+          </div>
+          <button type="button" aria-label="다음 카드" disabled={activeIndex >= slides.length - 1} onClick={() => goTo(activeIndex + 1)}><ChevronRight size={18} /></button>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function CardManager({
   products,
   userCards,
   payments,
   benefits,
   displayName,
+  wallet,
   pendingCard,
   actionMessage,
   onBack,
@@ -906,17 +1077,48 @@ function CardManager({
   payments: PaymentRecord[]
   benefits: Record<string, BenefitRule[]>
   displayName: string | null
+  wallet: WalletBalance | null
   pendingCard: string
   actionMessage: string
   onBack: () => void
   onToggle: (product: CardProduct) => Promise<void>
 }) {
   const [showAvailableProducts, setShowAvailableProducts] = useState(false)
+  const [activeSlide, setActiveSlide] = useState(0)
   const activeProductIds = new Set(userCards.map((card) => card.product_id))
   const connectedProducts = userCards.map((card) => ({
     card,
     product: products.find((item) => item.product_id === card.product_id),
   }))
+  const dongiEntry = connectedProducts.find(({ product }) => product && isDongbaekProduct(product))
+  const dongiProduct = dongiEntry?.product ?? null
+  const slides: CardSlide[] = [
+    {
+      key: 'dongi',
+      title: dongiProduct?.product_name ?? '동백전 카드',
+      issuer: dongiProduct?.issuer ?? '부산시민플랫폼',
+      holder: displayName,
+      isDongi: true,
+      balanceWon: wallet?.balance_won ?? null,
+      card: dongiEntry?.card,
+      product: dongiProduct ?? undefined,
+      rules: dongiProduct ? benefits[dongiProduct.product_id] ?? [] : [],
+    },
+    ...connectedProducts
+      .filter(({ card }) => card.user_card_id !== dongiEntry?.card.user_card_id)
+      .map(({ card, product }, index): CardSlide => ({
+        key: card.user_card_id,
+        title: product?.product_name ?? card.product_id,
+        issuer: product?.issuer ?? '카드 상품 정보 없음',
+        holder: displayName,
+        isDongi: false,
+        tone: index % 4,
+        card,
+        product,
+        rules: benefits[card.product_id] ?? [],
+      })),
+  ]
+  const current = slides[Math.min(activeSlide, slides.length - 1)]
   const availableProducts = products.filter((product) => !activeProductIds.has(product.product_id))
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -932,72 +1134,73 @@ function CardManager({
   return (
     <div className="screen-content manager-screen">
       <div className="detail-head"><button onClick={onBack} aria-label="뒤로"><ArrowLeft size={19} /></button><strong>내 카드 관리</strong><button onClick={onBack} aria-label="메뉴"><Menu size={19} /></button></div>
-      <section className="primary-card"><div className="card-brand"><span className="mascot tiny">◔ᴥ◔</span><div><b>원패스 카드</b><small>{displayName ?? '프로필 정보 미등록'} · 보유 카드 {userCards.length}장</small></div></div></section>
+      <CardCarousel
+        slides={slides}
+        activeIndex={activeSlide}
+        onChange={setActiveSlide}
+      />
       {pendingCard && <p className="card-action-status" role="status">카드 등록 상태를 변경하는 중입니다.</p>}
       {actionMessage && <p className="card-action-success" role="status">{actionMessage}</p>}
-      <p className="list-label">내 보유 카드 {userCards.length}장</p>
-      <section className="card-list">
-        {connectedProducts.map(({ card, product }) => (
-          <div className="card-row" key={card.user_card_id}>
+      {current && (
+        <section className="card-detail-panel" aria-live="polite">
+          <header>
             <div>
-              <b>{product?.product_name ?? card.product_id}</b>
-              <small>
-                {product?.issuer ?? '카드 상품 정보 없음'} ·{' '}
-                {(benefits[card.product_id] ?? []).length
-                  ? `혜택 ${(benefits[card.product_id] ?? []).length}개`
-                  : '혜택 정보 없음'}
-              </small>
-              {card.credit_limit_won != null && (
-                <small>
-                  남은 한도{' '}
-                  {formatWon(Math.max(0, card.credit_limit_won - getMonthlySpend(card.user_card_id)))}
-                  {' '}· 한도 {formatWon(card.credit_limit_won)} / 이번 달 결제{' '}
-                  {formatWon(getMonthlySpend(card.user_card_id))}
-                </small>
-              )}
-              {card.credit_limit_won == null && (
-                <small>
-                  남은 한도 정보 없음 · 이번 달 결제{' '}
-                  {formatWon(getMonthlySpend(card.user_card_id))}
-                </small>
-              )}
-              {(benefits[card.product_id] ?? []).length > 0 && (
-                <ul className="card-benefits">
-                  {(benefits[card.product_id] ?? []).map((rule) => {
-                    const caps = [
-                      rule.per_tx_cap_won != null
-                        ? `1회 최대 ${formatWon(rule.per_tx_cap_won)}`
-                        : null,
-                      rule.monthly_cap_won != null
-                        ? `월 최대 ${formatWon(rule.monthly_cap_won)}`
-                        : null,
-                      rule.monthly_count_cap != null
-                        ? `월 ${rule.monthly_count_cap}회`
-                        : null,
-                    ].filter((value): value is string => value !== null)
-                    return (
-                      <li key={rule.rule_id}>
-                        <span>{rule.benefit_name ?? rule.benefit_type ?? '혜택'}</span>
-                        {caps.length > 0 && <small>{caps.join(' · ')}</small>}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
+              <b>{current.title}</b>
+              <small>{current.issuer}</small>
             </div>
-            <button
-              className="card-action-button secondary"
-              type="button"
-              disabled={Boolean(pendingCard) || !product}
-              onClick={() => product && void onToggle(product)}
-            >
-              등록 해제
-            </button>
-          </div>
-        ))}
-        {!userCards.length && <p className="empty-state">현재 로그인 사용자에게 연결된 카드가 없습니다.</p>}
-      </section>
-      <button
+            {current.card && current.product && !current.isDongi && (
+              <button
+                className="card-action-button secondary"
+                type="button"
+                disabled={Boolean(pendingCard)}
+                onClick={() => current.product && void onToggle(current.product)}
+              >
+                등록 해제
+              </button>
+            )}
+          </header>
+          <dl className="card-stats">
+            {current.isDongi && (
+              <div><dt>동백전 잔액</dt><dd>{wallet ? formatWon(wallet.balance_won) : '확인 불가'}</dd></div>
+            )}
+            {current.card && (
+              <>
+                <div><dt>이번 달 결제</dt><dd>{formatWon(getMonthlySpend(current.card.user_card_id))}</dd></div>
+                <div>
+                  <dt>남은 한도</dt>
+                  <dd>
+                    {current.card.credit_limit_won != null
+                      ? formatWon(Math.max(0, current.card.credit_limit_won - getMonthlySpend(current.card.user_card_id)))
+                      : '정보 없음'}
+                  </dd>
+                </div>
+                {current.card.credit_limit_won != null && (
+                  <div><dt>전체 한도</dt><dd>{formatWon(current.card.credit_limit_won)}</dd></div>
+                )}
+              </>
+            )}
+          </dl>
+          <p className="list-label">카드 혜택</p>
+          {current.rules.length > 0 ? (
+            <ul className="card-benefits readable">
+              {current.rules.map((rule) => {
+                const caps = [
+                  rule.per_tx_cap_won != null ? `1회 최대 ${formatWon(rule.per_tx_cap_won)}` : null,
+                  rule.monthly_cap_won != null ? `월 최대 ${formatWon(rule.monthly_cap_won)}` : null,
+                  rule.monthly_count_cap != null ? `월 ${rule.monthly_count_cap}회` : null,
+                ].filter((value): value is string => value !== null)
+                return (
+                  <li key={rule.rule_id}>
+                    <b>{rule.benefit_name ?? rule.benefit_type ?? '혜택'}</b>
+                    {caps.length > 0 && <small>{caps.join(' · ')}</small>}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : <p className="empty-state">등록된 혜택 정보가 없습니다.</p>}
+        </section>
+      )}
+      {!userCards.length && <p className="empty-state">현재 로그인 사용자에게 연결된 카드가 없습니다.</p>}      <button
         className="card-action-button primary"
         type="button"
         disabled={Boolean(pendingCard) || !availableProducts.length}
@@ -1371,6 +1574,226 @@ type BarcodeDetectorLike = {
 }
 type BarcodeDetectorConstructor = new (options: { formats: string[] }) => BarcodeDetectorLike
 
+const MAX_QR_PAY_AMOUNT_WON = 9_999_999
+const QUICK_AMOUNTS_WON = [5000, 10000, 20000]
+
+function QrPayScreen({
+  userId,
+  merchantId,
+  merchants,
+  userCards,
+  wallet,
+  onBack,
+  onPaid,
+}: {
+  userId: string
+  merchantId: string
+  merchants: Merchant[]
+  userCards: UserCard[]
+  wallet: WalletBalance | null
+  onBack: () => void
+  onPaid: (summary: PaymentSummary) => Promise<void>
+}) {
+  const knownMerchant = merchants.find((item) => item.merchant_id === merchantId) ?? null
+  const [fetchedMerchant, setFetchedMerchant] = useState<Merchant | null>(null)
+  const [merchantError, setMerchantError] = useState('')
+  const [amount, setAmount] = useState('')
+  const [recommendation, setRecommendation] = useState<PaymentRecommendation | null>(null)
+  const [recommendationError, setRecommendationError] = useState('')
+  const [recommending, setRecommending] = useState(false)
+  const [selectedCardId, setSelectedCardId] = useState('')
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState('')
+  const payingRef = useRef(false)
+  const requestIdRef = useRef<string | null>(null)
+  const merchant = knownMerchant ?? fetchedMerchant
+  const amountWon = Number(amount)
+  const amountValid = Number.isInteger(amountWon) && amountWon > 0 && amountWon <= MAX_QR_PAY_AMOUNT_WON
+
+  useEffect(() => {
+    if (knownMerchant || !merchantId) return
+    const controller = new AbortController()
+    api.getMerchant(merchantId, { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setFetchedMerchant(result)
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return
+        setMerchantError(
+          cause instanceof ApiError && cause.status === 404
+            ? '등록되지 않은 가맹점 QR 코드입니다.'
+            : '가맹점 정보를 불러오지 못했습니다.',
+        )
+      })
+    return () => controller.abort()
+  }, [knownMerchant, merchantId])
+
+  useEffect(() => {
+    setRecommendation(null)
+    setSelectedCardId('')
+    setRecommendationError('')
+    requestIdRef.current = null
+    if (!merchant || !amountValid || !userCards.length) {
+      setRecommending(false)
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setRecommending(true)
+      api.recommendPayment(
+        { user_id: userId, merchant_id: merchant.merchant_id, amount_won: amountWon },
+        { signal: controller.signal },
+      )
+        .then((result) => {
+          if (controller.signal.aborted) return
+          setRecommendation(result)
+          setSelectedCardId(result.recommended_user_card_id ?? '')
+        })
+        .catch((cause: unknown) => {
+          if (controller.signal.aborted) return
+          setRecommendationError(cause instanceof Error ? cause.message : '추천 정보를 불러오지 못했습니다.')
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setRecommending(false)
+        })
+    }, 300)
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [merchant, amountValid, amountWon, userCards.length, userId])
+
+  const selectCard = (userCardId: string) => {
+    setSelectedCardId(userCardId)
+    requestIdRef.current = null
+  }
+
+  const selected = recommendation?.candidates.find((item) => item.user_card_id === selectedCardId) ?? null
+  const canPay = Boolean(merchant && amountValid && selected && !paying && !recommending)
+
+  const pay = async () => {
+    if (payingRef.current || !merchant || !selected || !amountValid) return
+    payingRef.current = true
+    setPaying(true)
+    setPayError('')
+    requestIdRef.current ??= newRequestId()
+    const balanceBeforeWon = wallet?.balance_won ?? null
+    try {
+      const result = await api.createPayment({
+        request_id: requestIdRef.current,
+        user_id: userId,
+        user_card_id: selected.user_card_id,
+        merchant_id: merchant.merchant_id,
+        amount_won: amountWon,
+      })
+      const detail = await api.getPaymentDetail(result.tx_id).catch(() => null)
+      await onPaid({
+        txId: result.tx_id,
+        merchantName: merchant.merchant_name ?? merchant.merchant_id,
+        amountWon,
+        productName: selected.product_name,
+        expectedBenefitWon: selected.expected_benefit_won,
+        awardedBenefitWon: detail ? detail.awarded_benefit_won ?? 0 : null,
+        balanceBeforeWon,
+        paidAt: result.event_at,
+      })
+    } catch (cause) {
+      payingRef.current = false
+      setPaying(false)
+      setPayError(
+        cause instanceof Error
+          ? cause.message
+          : '결제를 완료하지 못했습니다. 결제 내역을 확인한 뒤 다시 시도해 주세요.',
+      )
+    }
+  }
+
+  return (
+    <div className="screen-content detail-screen qr-pay-screen">
+      <div className="detail-head">
+        <button onClick={onBack} aria-label="뒤로" disabled={paying}><ArrowLeft size={19} /></button>
+        <strong>QR 결제</strong>
+        <span className="verified">시연용</span>
+      </div>
+      <section className="qr-pay-merchant">
+        <span>결제할 가맹점</span>
+        <strong>{merchant ? merchant.merchant_name ?? merchant.merchant_id : merchantError || '가맹점 확인 중…'}</strong>
+        {merchant && <small>{merchant.merchant_id}</small>}
+      </section>
+      <section className="pay-section">
+        <div className="section-title"><h3>결제 금액</h3><span>보유 잔액 {wallet ? formatWon(wallet.balance_won) : '확인 불가'}</span></div>
+        <label className="form-field">금액 입력
+          <div className="amount-input">
+            <input
+              aria-label="결제 금액"
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="금액을 입력해 주세요"
+              value={amount}
+              disabled={paying}
+              onChange={(event) => setAmount(event.target.value.replace(/[^0-9]/g, '').slice(0, 7))}
+            />
+            <b>원</b>
+          </div>
+        </label>
+        <div className="quick-amounts">
+          {QUICK_AMOUNTS_WON.map((value) => (
+            <button key={value} type="button" disabled={paying} onClick={() => setAmount(String(value))}>{formatWon(value)}</button>
+          ))}
+        </div>
+        <div className="recommend">
+          {recommending && <LoaderCircle className="spin" size={17} />}
+          {recommendation ? (
+            recommendation.candidates.length ? (
+              <>
+                <small>결제 카드를 확인해 주세요. 예상 혜택은 결제 전 추정값입니다.</small>
+                <ol className="benefit-comparison-list">
+                  {recommendation.candidates
+                    .slice()
+                    .sort((left, right) => right.expected_benefit_won - left.expected_benefit_won)
+                    .map((candidate) => (
+                      <li
+                        key={candidate.user_card_id}
+                        className={candidate.user_card_id === selectedCardId ? 'recommended selectable selected' : 'selectable'}
+                      >
+                        <button
+                          type="button"
+                          className="candidate-select"
+                          disabled={paying || !candidate.eligible}
+                          aria-pressed={candidate.user_card_id === selectedCardId}
+                          onClick={() => selectCard(candidate.user_card_id)}
+                        >
+                          <span>
+                            <b>{candidate.product_name ?? '카드 상품'}{candidate.user_card_id === recommendation.recommended_user_card_id ? ' · 추천' : ''}</b>
+                            <small>{candidate.eligible ? '결제 가능' : '결제 불가'}</small>
+                          </span>
+                          <strong>예상 혜택 {formatWon(candidate.expected_benefit_won)}</strong>
+                        </button>
+                      </li>
+                    ))}
+                </ol>
+              </>
+            ) : <small>결제에 사용할 수 있는 카드가 없습니다.</small>
+          ) : (
+            <small>{recommendationError || (userCards.length ? '금액을 입력하면 최적 결제 카드와 예상 혜택을 조회합니다.' : '내 카드 관리에서 카드를 연결해 주세요.')}</small>
+          )}
+        </div>
+        {payError && <p className="identity-card-error" role="alert">{payError}</p>}
+        <button
+          type="button"
+          className="primary-action qr-pay-submit"
+          disabled={!canPay}
+          aria-busy={paying}
+          onClick={() => void pay()}
+        >
+          {paying ? <><LoaderCircle className="spin" size={18} /> 결제 처리 중…</> : `${amountValid ? formatWon(amountWon) : ''} 결제하기`.trim()}
+        </button>
+        <p className="qr-camera-note">시연용 모의결제입니다. 실제 금융 결제는 발생하지 않습니다.</p>
+      </section>
+    </div>
+  )
+}
+
 function QrScanScreen({
   merchants,
   error,
@@ -1445,8 +1868,6 @@ function QrScanScreen({
         if (Detector) {
           detector = new Detector({ formats: ['qr_code'] })
           void scan()
-        } else {
-          setCameraError('이 브라우저는 QR 자동 인식을 지원하지 않습니다. 화면을 비추거나 QR 문자열을 직접 입력해 주세요.')
         }
       } catch (cause) {
         if (!disposed) {
@@ -1486,22 +1907,8 @@ function QrScanScreen({
           <video ref={videoRef} autoPlay playsInline muted aria-label="QR 스캔 카메라 화면" />
           <span className="qr-scan-frame" aria-hidden="true" />
         </div>
-        <p className="qr-camera-note">등록된 체험 가맹점 QR 코드만 사용할 수 있습니다. 실제 결제는 발생하지 않습니다.</p>
         {cameraError && <p className="identity-card-error" role="status">{cameraError}</p>}
         {error && <p className="identity-card-error" role="alert">{error}</p>}
-        <form className="qr-manual-form" onSubmit={submitManualQr}>
-          <label className="form-field">카메라가 열리지 않으면 QR 문자열 입력
-            <input
-              value={manualValue}
-              onChange={(event) => setManualValue(event.target.value)}
-              placeholder='예: dongbaek://pay?merchant_id=...'
-              autoComplete="off"
-            />
-          </label>
-          <button className="primary-action" type="submit" disabled={!manualValue.trim() || !merchants.length}>
-            가맹점 확인 후 결제 계속
-          </button>
-        </form>
       </section>
     </div>
   )

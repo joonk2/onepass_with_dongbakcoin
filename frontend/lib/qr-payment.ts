@@ -1,5 +1,18 @@
 import type { Merchant } from './api'
 
+export const QR_PAY_PATH = '/pay'
+
+export function buildMerchantPayUrl(origin: string, merchantId: string): string {
+  const url = new URL(QR_PAY_PATH, origin)
+  url.searchParams.set('merchant_id', merchantId)
+  return url.toString()
+}
+
+export function merchantIdFromSearch(search: string): string | null {
+  const merchantId = new URLSearchParams(search).get('merchant_id')?.trim()
+  return merchantId ? merchantId : null
+}
+
 function merchantIdFromValue(value: string): string | null {
   const trimmed = value.trim()
   if (!trimmed) return null
@@ -24,6 +37,12 @@ function merchantIdFromValue(value: string): string | null {
     const url = new URL(trimmed)
     if (url.protocol === 'dongbaek:' && url.hostname === 'pay') {
       return url.searchParams.get('merchant_id')
+    }
+    if (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      url.pathname.replace(/\/+$/, '') === QR_PAY_PATH
+    ) {
+      return merchantIdFromSearch(url.search)
     }
     return null
   } catch {
