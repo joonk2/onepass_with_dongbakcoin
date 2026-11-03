@@ -16,6 +16,7 @@ from app.api.v1.routers.payment_router import (
 from app.api.v1.routers.category_priority_router import (
     router as category_priority_router,
 )
+from app.api.v1.routers.user_router import router as user_router
 
 
 api_router = APIRouter()
@@ -27,6 +28,7 @@ api_router.include_router(benefit_router)
 api_router.include_router(merchant_router)
 api_router.include_router(payment_router)
 api_router.include_router(user_payment_router)
+api_router.include_router(user_router)
 
 # 업종별 카드 우선순위 API
 api_router.include_router(category_priority_router)
