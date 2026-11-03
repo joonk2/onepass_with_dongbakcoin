@@ -733,7 +733,6 @@ function HomeScreen({
   onOpenReport: () => void
   onOpenMenu: () => void
 }) {
-  const recent = payments[0]
   const total = payments.reduce((sum, payment) => sum + payment.amount_won, 0)
   return (
     <div className="screen-content">
@@ -786,6 +785,21 @@ function HomeScreen({
         <span><b>QR 결제</b><small>카메라로 가맹점 QR을 스캔하세요</small></span>
         <ChevronRight size={22} />
       </button>
+      <section className="api-panel">
+        <div className="chart-heading"><div><b>최근 결제 내역</b><small>최근 승인된 결제 정보</small></div><button onClick={onOpenReport}>전체 보기 ›</button></div>
+        {payments.length ? payments.slice(0, 3).map((item) => (
+          <div className="recent-payment" key={item.tx_id}>
+            <div>
+              <b>{item.merchant_name ?? '가맹점'}</b>
+              <small>{item.product_name ?? '카드'} · {new Date(item.event_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>
+              {(item.awarded_benefit_won ?? 0) > 0 && (
+                <small className="recent-cashback">받은 캐시백 +{formatWon(item.awarded_benefit_won ?? 0)}</small>
+              )}
+            </div>
+            <strong>{formatWon(item.amount_won)}</strong>
+          </div>
+        )) : <p className="empty-state">표시할 결제 이력이 없습니다.</p>}
+      </section>
       <button className="recharge-shortcut" onClick={onOpenRecharge}><span><CreditCard size={15} /> 충전</span><b>{wallet ? '동백전 잔액' : walletError || '잔액 정보 확인 필요'}</b><ChevronRight size={16} /></button>
       <button className="report-shortcut" onClick={onOpenReport}><span><BarChart3 size={16} /> 월별 사용 리포트</span><b>이용 내역 기준</b><ChevronRight size={16} /></button>
       <section className="walk-card"><div><b>조금 더 걸어볼까요?</b><br /><span>산책이라도 나설까요?</span><small>걷기사용 · 오늘의 걸음은 연결 후 표시됩니다</small></div><span className="walk-icon">◜◡◝</span></section>
@@ -794,21 +808,6 @@ function HomeScreen({
         <button onClick={onOpenReport}><b>월별 사용 리포트</b><span>결제 이용 내역을 확인해요</span></button>
       </div>
       <div className="quick-grid">{quickLinks.map(({ label, icon: Icon, tone }) => <button key={label} type="button" disabled><span className={`quick-icon ${tone}`}><Icon size={17} /></span><b>{label}</b></button>)}</div>
-      <section className="api-panel">
-        <div className="chart-heading"><div><b>최근 결제 내역</b><small>최근 승인된 결제 정보</small></div><button onClick={onOpenReport}>전체 보기 ›</button></div>
-        {recent ? (
-          <div className="recent-payment">
-            <div>
-              <b>{recent.merchant_name ?? '가맹점'}</b>
-              <small>{recent.product_name ?? '카드'} · {new Date(recent.event_at).toLocaleDateString('ko-KR')}</small>
-              {(recent.awarded_benefit_won ?? 0) > 0 && (
-                <small className="recent-cashback">받은 캐시백 +{formatWon(recent.awarded_benefit_won ?? 0)}</small>
-              )}
-            </div>
-            <strong>{formatWon(recent.amount_won)}</strong>
-          </div>
-        ) : <p className="empty-state">표시할 결제 이력이 없습니다.</p>}
-      </section>
     </div>
   )
 }
