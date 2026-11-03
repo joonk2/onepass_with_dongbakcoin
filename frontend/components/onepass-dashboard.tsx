@@ -999,25 +999,63 @@ function CardCarousel({
   onChange: (index: number) => void
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
-  const goTo = (index: number) => {
+  const [paused, setPaused] = useState(false)
+  const scrollToSlide = (index: number) => {
     const track = trackRef.current
-    if (!track) return
-    track.scrollTo({ left: index * track.clientWidth, behavior: 'smooth' })
+    const slide = track?.children[index] as HTMLElement | undefined
+    if (!track || !slide) return
+    const left = slide.offsetLeft - (track.clientWidth - slide.clientWidth) / 2
+    track.scrollTo({ left, behavior: 'smooth' })
+  }
+  const goTo = (index: number) => {
+    scrollToSlide(index)
     onChange(index)
   }
+  const count = slides.length
+  useEffect(() => {
+    if (count < 2 || paused) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const timer = window.setTimeout(() => {
+      const next = (activeIndex + 1) % count
+      scrollToSlide(next)
+      onChange(next)
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [activeIndex, count, paused, onChange])
   return (
-    <section className="card-carousel" aria-label="내 보유 카드">
+    <section
+      className="card-carousel"
+      aria-label="내 보유 카드"
+      onPointerDown={() => setPaused(true)}
+      onPointerUp={() => setPaused(false)}
+      onPointerCancel={() => setPaused(false)}
+      onPointerLeave={() => setPaused(false)}
+    >
       <div
         className="carousel-track"
         ref={trackRef}
         onScroll={(event) => {
           const track = event.currentTarget
-          const index = Math.round(track.scrollLeft / Math.max(track.clientWidth, 1))
-          if (index !== activeIndex) onChange(index)
+          const center = track.scrollLeft + track.clientWidth / 2
+          let nearest = 0
+          let best = Infinity
+          Array.from(track.children).forEach((child, index) => {
+            const element = child as HTMLElement
+            const distance = Math.abs(element.offsetLeft + element.clientWidth / 2 - center)
+            if (distance < best) {
+              best = distance
+              nearest = index
+            }
+          })
+          if (nearest !== activeIndex) onChange(nearest)
         }}
       >
-        {slides.map((slide) => (
-          <div className="carousel-slide" key={slide.key}>
+        {slides.map((slide, index) => (
+          <div
+            className={`carousel-slide ${index === activeIndex ? 'current' : ''}`}
+            key={slide.key}
+            onClick={() => index !== activeIndex && goTo(index)}
+          >
             {slide.isDongi ? (
               <div className="carousel-card dongi">
                 <DongiImage variant="big" alt="동이 캐릭터 동백전 카드" className="home-balance-image" priority />
