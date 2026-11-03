@@ -16,6 +16,7 @@ import app.db_entities.merchant_entity
 import app.db_entities.policy_entity
 import app.db_entities.registration_entity
 import app.db_entities.user_entity
+from app.api.auth_dependencies import require_path_user
 from app.api.v1.routers.user_router import get_user_service, router
 from app.core.database import Base
 from app.db_entities.ledger_entity import Ledger
@@ -172,6 +173,9 @@ def test_user_profile_and_wallet_routes():
             app = FastAPI()
             app.include_router(router, prefix="/api/v1")
             app.dependency_overrides[get_user_service] = lambda: service
+            app.dependency_overrides[require_path_user] = lambda: db.get(
+                User, "USER_001"
+            )
 
             with TestClient(app) as client:
                 profile = client.get("/api/v1/users/USER_001/profile")
@@ -340,7 +344,7 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                 )
             )
             migration_path = (
-                Path(__file__).resolve().parents[3]
+                Path(__file__).resolve().parents[5]
                 / "db"
                 / "migrations"
                 / "20261103_profile_wallet_demo.sql"
@@ -349,6 +353,12 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                 statement = statement.strip()
                 if statement and statement.upper() not in {"BEGIN", "COMMIT"}:
                     connection.execute(text(statement))
+            connection.execute(
+                text("ALTER TABLE user_profile ADD COLUMN university TEXT")
+            )
+            connection.execute(
+                text("ALTER TABLE user_profile ADD COLUMN department TEXT")
+            )
     finally:
         engine.dispose()
 
@@ -358,7 +368,14 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
 
     with create_engine(database_url).connect() as connection:
         profile = connection.execute(
-            text("SELECT display_name, source_mode FROM user_profile WHERE user_id = 'USER_001'")
+            text(
+                """
+                SELECT display_name, student_card_id, university, department,
+                       source_mode
+                FROM user_profile
+                WHERE user_id = 'USER_001'
+                """
+            )
         ).one()
         wallet = connection.execute(
             text("SELECT charge_won FROM db_wallet WHERE wallet_id = 'WALLET_USER_001'")
@@ -402,7 +419,7 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                 """
             )
         ).one()
-    assert profile == ("김개미", "SYNTHETIC")
+    assert profile == ("김개미", "s_123", "갈매기 대학교", "철학과", "SYNTHETIC")
     assert wallet == 30_000
     assert tuple(card) == ("USER_001", "BNK_CR_P07", 1_500_000)
     assert [tuple(item[:4]) for item in demo_cards] == [

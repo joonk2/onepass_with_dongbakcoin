@@ -1,3 +1,0 @@
-user_id,source_user_id,user_card_id,source_user_card_id,product_id,card_status,credit_limit_won,default_preference_rank,expires_at,active_from
-USER_001,U0004,DEMO_USER_CARD_001,UC_U0004_CR,BNK_CR_P07,ACTIVE,1500000,1,2028-12-31,2025-01-01
-USER_001,U0004,DEMO_USER_CARD_U0004_CK,UC_U0004_CK,BNK_CK_P23,ACTIVE,,2,2028-12-31,2025-01-01

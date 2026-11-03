@@ -44,6 +44,8 @@ class UserService:
             user_id=user.user_id,
             display_name=profile.display_name if profile else None,
             student_card_id=profile.student_card_id if profile else None,
+            university=profile.university if profile else None,
+            department=profile.department if profile else None,
             phone_number=profile.phone_number if profile else None,
             address=profile.address if profile else None,
             source_mode=(
@@ -71,6 +73,8 @@ class UserService:
 
         profile.display_name = request.display_name
         profile.student_card_id = request.student_card_id
+        profile.university = request.university
+        profile.department = request.department
         profile.phone_number = request.phone_number
         profile.address = request.address
         profile.updated_at = now

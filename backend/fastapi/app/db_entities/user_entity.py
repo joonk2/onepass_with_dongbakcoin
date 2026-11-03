@@ -51,6 +51,8 @@ class UserProfile(Base):
     )
     display_name: Mapped[str | None] = mapped_column(Text)
     student_card_id: Mapped[str | None] = mapped_column(Text)
+    university: Mapped[str | None] = mapped_column(Text)
+    department: Mapped[str | None] = mapped_column(Text)
     phone_number: Mapped[str | None] = mapped_column(Text)
     address: Mapped[str | None] = mapped_column(Text)
     source_mode: Mapped[str | None] = mapped_column(Text)

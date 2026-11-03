@@ -142,10 +142,10 @@ def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
                         """
                         INSERT INTO user_profile (
                             user_id, display_name, student_card_id, phone_number,
-                            address, source_mode
+                            address, university, department, source_mode
                         ) VALUES (
                             :user_id, :display_name, :student_card_id, :phone_number,
-                            :address, 'SYNTHETIC'
+                            :address, :university, :department, 'SYNTHETIC'
                         )
                         ON CONFLICT (user_id) DO NOTHING
                         """

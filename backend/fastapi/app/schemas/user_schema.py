@@ -7,6 +7,8 @@ class UserProfileResponse(BaseModel):
     user_id: str
     display_name: str | None
     student_card_id: str | None
+    university: str | None
+    department: str | None
     phone_number: str | None
     address: str | None
     source_mode: str
@@ -15,6 +17,8 @@ class UserProfileResponse(BaseModel):
 class UserProfileUpdateRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=80)
     student_card_id: str | None = Field(default=None, max_length=64)
+    university: str | None = Field(default=None, max_length=120)
+    department: str | None = Field(default=None, max_length=120)
     phone_number: str | None = Field(default=None, max_length=32)
     address: str | None = Field(default=None, max_length=300)
 

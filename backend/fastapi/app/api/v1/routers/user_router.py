@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.auth_dependencies import require_path_user
 from app.api.dependencies import get_db
 from app.schemas.user_schema import (
     UserProfileResponse,
@@ -21,6 +22,7 @@ from app.services.user_service import (
 router = APIRouter(
     prefix="/users",
     tags=["Users"],
+    dependencies=[Depends(require_path_user)],
 )
 
 
