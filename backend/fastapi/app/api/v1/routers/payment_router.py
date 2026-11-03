@@ -24,6 +24,7 @@ from app.services.payment_service import (
     PaymentValidationError,
     PaymentNotFoundError,
     DuplicatePaymentError,
+    InsufficientBalanceError,
 )
 from app.schemas.payment_schema import PaymentDetailResponse
 from app.schemas.payment_schema import PaymentHistoryResponse
@@ -60,7 +61,7 @@ def get_mock_payment_service(
 ) -> PaymentService:
     """모의 결제 서비스 의존성 주입"""
 
-    return PaymentService(db=db)
+    return PaymentService(db=db, engine=RuleEngineAdapter())
 
 
 
@@ -111,6 +112,12 @@ def create_mock_payment(
     except PaymentNotFoundError as exc:
         raise HTTPException(
             status_code=404,
+            detail=str(exc),
+        ) from exc
+
+    except InsufficientBalanceError as exc:
+        raise HTTPException(
+            status_code=422,
             detail=str(exc),
         ) from exc
 
