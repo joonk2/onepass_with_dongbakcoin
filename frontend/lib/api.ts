@@ -15,6 +15,7 @@ export type UserCard = {
   user_id: string
   product_id: string
   card_status: string | null
+  credit_limit_won: number | null
   default_preference_rank: number | null
 }
 

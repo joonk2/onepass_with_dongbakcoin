@@ -246,9 +246,66 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                 text(
                     """
                     CREATE TABLE ledger (
+                        tx_id TEXT,
                         request_id TEXT,
-                        event_type TEXT
+                        user_id TEXT,
+                        user_card_id TEXT,
+                        merchant_id TEXT,
+                        event_at TIMESTAMP,
+                        event_seq INTEGER,
+                        event_type TEXT,
+                        bucket_type TEXT,
+                        delta_won INTEGER,
+                        gross_purchase_won INTEGER,
+                        awarded_benefit_won INTEGER,
+                        approval_status TEXT,
+                        source_mode TEXT,
+                        event_note TEXT
                     )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE card_product (
+                        product_id TEXT PRIMARY KEY
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE merchant (
+                        merchant_id TEXT PRIMARY KEY
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE user_card (
+                        user_card_id TEXT PRIMARY KEY,
+                        user_id TEXT,
+                        product_id TEXT,
+                        card_status TEXT,
+                        credit_limit_won INTEGER,
+                        default_preference_rank INTEGER,
+                        registered_ref TEXT
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text("INSERT INTO card_product (product_id) VALUES ('BNK_CR_P07')")
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO merchant (merchant_id)
+                    VALUES ('M00001'), ('M00002'), ('M00003')
                     """
                 )
             )
@@ -276,8 +333,28 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
         wallet = connection.execute(
             text("SELECT charge_won FROM db_wallet WHERE wallet_id = 'WALLET_USER_001'")
         ).scalar_one()
+        card = connection.execute(
+            text(
+                """
+                SELECT user_id, product_id, credit_limit_won
+                FROM user_card
+                WHERE user_card_id = 'DEMO_USER_CARD_001'
+                """
+            )
+        ).one()
+        payment_summary = connection.execute(
+            text(
+                """
+                SELECT COUNT(*), SUM(gross_purchase_won)
+                FROM ledger
+                WHERE user_id = 'USER_001' AND event_type = 'PAYMENT'
+                """
+            )
+        ).one()
     assert profile == ("김개미", "SYNTHETIC")
     assert wallet == 30_000
+    assert tuple(card) == ("USER_001", "BNK_CR_P07", 500_000)
+    assert tuple(payment_summary) == (3, 35_500)
 
 
 def test_synthetic_csv_loader_blocks_remote_database_by_default(

@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -8,6 +9,7 @@ from sqlalchemy.engine import make_url
 
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "demo_users.csv"
+PAYMENTS_FILE = Path(__file__).resolve().parents[1] / "data" / "demo_payments.csv"
 
 
 def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
@@ -29,6 +31,8 @@ def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
         rows = list(csv.DictReader(csv_file))
     if not rows:
         raise RuntimeError("The demo CSV contains no users.")
+    with PAYMENTS_FILE.open(encoding="utf-8-sig", newline="") as csv_file:
+        payment_rows = list(csv.DictReader(csv_file))
 
     engine = create_engine(database_url, pool_pre_ping=True)
     try:
@@ -121,6 +125,140 @@ def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
                     ),
                     row,
                 )
+                product_exists = connection.execute(
+                    text(
+                        """
+                        SELECT product_id
+                        FROM card_product
+                        WHERE product_id = :product_id
+                        """
+                    ),
+                    {"product_id": row["product_id"]},
+                ).scalar_one_or_none()
+                if product_exists is None:
+                    raise RuntimeError(
+                        "Demo card product ID is not present in the database."
+                    )
+
+                credit_limit = int(row["credit_limit_won"])
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO user_card (
+                            user_card_id, user_id, product_id, card_status,
+                            credit_limit_won, default_preference_rank,
+                            registered_ref
+                        ) VALUES (
+                            :user_card_id, :user_id, :product_id, 'ACTIVE',
+                            :credit_limit_won, 1, 'SYNTHETIC_DEMO'
+                        )
+                        ON CONFLICT (user_card_id) DO NOTHING
+                        """
+                    ),
+                    {
+                        "user_card_id": row["user_card_id"],
+                        "user_id": row["user_id"],
+                        "product_id": row["product_id"],
+                        "credit_limit_won": credit_limit,
+                    },
+                )
+                existing_card = connection.execute(
+                    text(
+                        """
+                        SELECT user_id, product_id, credit_limit_won
+                        FROM user_card
+                        WHERE user_card_id = :user_card_id
+                        """
+                    ),
+                    {"user_card_id": row["user_card_id"]},
+                ).one_or_none()
+                if existing_card is None or tuple(existing_card) != (
+                    row["user_id"],
+                    row["product_id"],
+                    credit_limit,
+                ):
+                    raise RuntimeError(
+                        "Demo card ID conflicts with existing card data."
+                    )
+
+                for payment in payment_rows:
+                    if (
+                        payment["user_id"] != row["user_id"]
+                        or payment["user_card_id"] != row["user_card_id"]
+                    ):
+                        continue
+
+                    merchant_exists = connection.execute(
+                        text(
+                            """
+                            SELECT merchant_id
+                            FROM merchant
+                            WHERE merchant_id = :merchant_id
+                            """
+                        ),
+                        {"merchant_id": payment["merchant_id"]},
+                    ).scalar_one_or_none()
+                    if merchant_exists is None:
+                        raise RuntimeError(
+                            "Demo payment merchant ID is not present in the database."
+                        )
+
+                    amount = int(payment["amount_won"])
+                    existing_payment = connection.execute(
+                        text(
+                            """
+                            SELECT user_id, user_card_id, merchant_id,
+                                   gross_purchase_won
+                            FROM ledger
+                            WHERE request_id = :request_id
+                              AND event_type = 'PAYMENT'
+                            """
+                        ),
+                        {"request_id": payment["request_id"]},
+                    ).one_or_none()
+                    expected_payment = (
+                        payment["user_id"],
+                        payment["user_card_id"],
+                        payment["merchant_id"],
+                        amount,
+                    )
+                    if existing_payment is not None:
+                        if tuple(existing_payment) != expected_payment:
+                            raise RuntimeError(
+                                "Demo payment request ID conflicts with existing data."
+                            )
+                        continue
+
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO ledger (
+                                tx_id, request_id, user_id, user_card_id,
+                                merchant_id, event_at, event_seq, event_type,
+                                bucket_type, delta_won, gross_purchase_won,
+                                awarded_benefit_won, approval_status,
+                                source_mode, event_note
+                            ) VALUES (
+                                :tx_id, :request_id, :user_id, :user_card_id,
+                                :merchant_id, :event_at, 1, 'PAYMENT', 'NONE',
+                                :delta_won, :gross_purchase_won, 0,
+                                'APPROVED', 'MOCK',
+                                'Synthetic demo payment; no real payment was processed.'
+                            )
+                            """
+                        ),
+                        {
+                            "tx_id": f"DEMO_TX_{payment['request_id']}",
+                            "request_id": payment["request_id"],
+                            "user_id": payment["user_id"],
+                            "user_card_id": payment["user_card_id"],
+                            "merchant_id": payment["merchant_id"],
+                            "event_at": datetime.now()
+                            - timedelta(days=int(payment["days_ago"])),
+                            "delta_won": -amount,
+                            "gross_purchase_won": amount,
+                        },
+                    )
     finally:
         engine.dispose()
 

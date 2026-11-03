@@ -316,6 +316,7 @@ export default function OnePassDashboard() {
               <CardManager
                 products={products}
                 userCards={activeCards}
+                payments={approvedPayments}
                 benefits={benefits}
                 displayName={profile?.display_name ?? null}
                 pendingCard={pendingCard}
@@ -554,6 +555,7 @@ function CardDetail({
 function CardManager({
   products,
   userCards,
+  payments,
   benefits,
   displayName,
   pendingCard,
@@ -562,6 +564,7 @@ function CardManager({
 }: {
   products: CardProduct[]
   userCards: UserCard[]
+  payments: PaymentRecord[]
   benefits: Record<string, BenefitRule[]>
   displayName: string | null
   pendingCard: string
@@ -574,6 +577,7 @@ function CardManager({
     product: products.find((item) => item.product_id === card.product_id),
   }))
   const availableProducts = products.filter((product) => !activeProductIds.has(product.product_id))
+  const currentMonth = new Date().toISOString().slice(0, 7)
 
   return (
     <div className="screen-content manager-screen">
@@ -583,7 +587,21 @@ function CardManager({
       <section className="card-list">
         {connectedProducts.map(({ card, product }) => (
           <div className="card-row" key={card.user_card_id}>
-            <div><b>{product?.product_name ?? card.product_id}</b><small>{product?.issuer ?? '카드 상품 정보 없음'} · {(benefits[card.product_id] ?? []).map((rule) => rule.benefit_name ?? rule.benefit_type ?? '혜택').join(', ') || '혜택 정보 없음'}</small></div>
+            <div>
+              <b>{product?.product_name ?? card.product_id}</b>
+              <small>{product?.issuer ?? '카드 상품 정보 없음'} · {(benefits[card.product_id] ?? []).map((rule) => rule.benefit_name ?? rule.benefit_type ?? '혜택').join(', ') || '혜택 정보 없음'}</small>
+              {card.credit_limit_won != null && (
+                <small>
+                  카드 한도 {formatWon(card.credit_limit_won)} · 이번 달 결제{' '}
+                  {formatWon(payments
+                    .filter((payment) =>
+                      payment.user_card_id === card.user_card_id &&
+                      payment.event_at.slice(0, 7) === currentMonth,
+                    )
+                    .reduce((total, payment) => total + payment.amount_won, 0))}
+                </small>
+              )}
+            </div>
             <Toggle
               on
               label={`${product?.product_name ?? card.product_id} 연결 해제`}
