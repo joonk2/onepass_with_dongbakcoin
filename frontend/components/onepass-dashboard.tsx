@@ -759,7 +759,7 @@ function HomeScreen({
       {lastPayment && (
         <section className="payment-result-banner" role="status" aria-live="polite">
           <div className="payment-result-head">
-            <b>결제가 완료되었습니다 (시연용 모의결제)</b>
+            <b>결제 완료</b>
             <button type="button" onClick={onDismissLastPayment} aria-label="결제 결과 닫기"><X size={15} /></button>
           </div>
           <dl>
@@ -774,10 +774,9 @@ function HomeScreen({
                   : wallet ? formatWon(wallet.balance_won) : '확인 불가'}
               </dd>
             </div>
-            <div><dt>예상 혜택 (결제 전 추정)</dt><dd>{formatWon(lastPayment.expectedBenefitWon)}</dd></div>
             <div className="highlight">
-              <dt>받은 캐시백 (실제 지급)</dt>
-              <dd>{lastPayment.awardedBenefitWon === null ? '확인 중' : formatWon(lastPayment.awardedBenefitWon)}</dd>
+              <dt>받은 캐시백</dt>
+              <dd>{lastPayment.awardedBenefitWon === null ? '-' : `+${formatWon(lastPayment.awardedBenefitWon)}`}</dd>
             </div>
           </dl>
         </section>
@@ -1751,7 +1750,7 @@ function QrPayScreen({
       <div className="detail-head">
         <button onClick={onBack} aria-label="뒤로" disabled={paying}><ArrowLeft size={19} /></button>
         <strong>QR 결제</strong>
-        <span className="verified">시연용</span>
+        <span aria-hidden="true" />
       </div>
       <section className="qr-pay-merchant">
         <span>결제할 가맹점</span>
@@ -1826,7 +1825,6 @@ function QrPayScreen({
         >
           {paying ? <><LoaderCircle className="spin" size={18} /> 결제 처리 중…</> : `${amountValid ? formatWon(amountWon) : ''} 결제하기`.trim()}
         </button>
-        <p className="qr-camera-note">시연용 모의결제입니다. 실제 금융 결제는 발생하지 않습니다.</p>
       </section>
     </div>
   )
