@@ -293,13 +293,43 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                         card_status TEXT,
                         credit_limit_won INTEGER,
                         default_preference_rank INTEGER,
+                        expires_at DATE,
+                        active_from DATE,
                         registered_ref TEXT
                     )
                     """
                 )
             )
             connection.execute(
-                text("INSERT INTO card_product (product_id) VALUES ('BNK_CR_P07')")
+                text(
+                    """
+                    INSERT INTO "user" (user_id, user_type, origin_type)
+                    VALUES ('U0004', 'SYNTHETIC', 'SYNTHETIC')
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO card_product (product_id)
+                    VALUES ('BNK_CR_P07'), ('BNK_CK_P23')
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO user_card (
+                        user_card_id, user_id, product_id, card_status,
+                        credit_limit_won, default_preference_rank,
+                        expires_at, active_from
+                    ) VALUES
+                    ('UC_U0004_CR', 'U0004', 'BNK_CR_P07', 'ACTIVE',
+                     1500000, 1, '2028-12-31', '2025-01-01'),
+                    ('UC_U0004_CK', 'U0004', 'BNK_CK_P23', 'ACTIVE',
+                     NULL, 2, '2028-12-31', '2025-01-01')
+                    """
+                )
             )
             connection.execute(
                 text(
@@ -342,6 +372,27 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
                 """
             )
         ).one()
+        demo_cards = connection.execute(
+            text(
+                """
+                SELECT user_card_id, product_id, credit_limit_won,
+                       default_preference_rank, registered_ref
+                FROM user_card
+                WHERE user_id = 'USER_001'
+                ORDER BY default_preference_rank
+                """
+            )
+        ).all()
+        source_cards = connection.execute(
+            text(
+                """
+                SELECT user_card_id, product_id, credit_limit_won
+                FROM user_card
+                WHERE user_id = 'U0004'
+                ORDER BY default_preference_rank
+                """
+            )
+        ).all()
         payment_summary = connection.execute(
             text(
                 """
@@ -353,7 +404,15 @@ def test_synthetic_csv_loader_is_idempotent_for_local_databases(
         ).one()
     assert profile == ("김개미", "SYNTHETIC")
     assert wallet == 30_000
-    assert tuple(card) == ("USER_001", "BNK_CR_P07", 500_000)
+    assert tuple(card) == ("USER_001", "BNK_CR_P07", 1_500_000)
+    assert [tuple(item[:4]) for item in demo_cards] == [
+        ("DEMO_USER_CARD_001", "BNK_CR_P07", 1_500_000, 1),
+        ("DEMO_USER_CARD_U0004_CK", "BNK_CK_P23", None, 2),
+    ]
+    assert [tuple(item) for item in source_cards] == [
+        ("UC_U0004_CR", "BNK_CR_P07", 1_500_000),
+        ("UC_U0004_CK", "BNK_CK_P23", None),
+    ]
     assert tuple(payment_summary) == (3, 35_500)
 
 

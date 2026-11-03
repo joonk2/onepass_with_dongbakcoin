@@ -30,3 +30,8 @@ button { border: 0; font: inherit; color: inherit; cursor: pointer; }
 .topup-error, .topup-success { margin:10px 0 0; font-size:11px; line-height:1.45; }
 .topup-error { color:#b42318; }
 .topup-success { color:#16876e; }
+.card-benefits { list-style:none; margin:7px 0 0; padding:0; display:grid; gap:5px; }
+.card-benefits li { border-left:2px solid #e8edf3; padding-left:7px; }
+.card-benefits li > span, .card-benefits li > small { display:block; font-size:10px; line-height:1.4; }
+.card-benefits li > span { color:#384454; }
+.card-benefits li > small { color:var(--muted); margin-top:2px; }

@@ -9,7 +9,30 @@ from sqlalchemy.engine import make_url
 
 
 DATA_FILE = Path(__file__).resolve().parents[1] / "data" / "demo_users.csv"
+CARDS_FILE = Path(__file__).resolve().parents[1] / "data" / "demo_user_cards.csv"
 PAYMENTS_FILE = Path(__file__).resolve().parents[1] / "data" / "demo_payments.csv"
+
+
+def _date_value(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _demo_card_values(card: dict[str, str], source_ref: str) -> dict:
+    return {
+        "user_card_id": card["user_card_id"],
+        "user_id": card["user_id"],
+        "product_id": card["product_id"],
+        "card_status": card["card_status"],
+        "credit_limit_won": (
+            int(card["credit_limit_won"]) if card["credit_limit_won"] else None
+        ),
+        "default_preference_rank": int(card["default_preference_rank"]),
+        "expires_at": card["expires_at"] or None,
+        "active_from": card["active_from"] or None,
+        "registered_ref": source_ref,
+    }
 
 
 def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
@@ -31,6 +54,10 @@ def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
         rows = list(csv.DictReader(csv_file))
     if not rows:
         raise RuntimeError("The demo CSV contains no users.")
+    with CARDS_FILE.open(encoding="utf-8-sig", newline="") as csv_file:
+        card_rows = list(csv.DictReader(csv_file))
+    if not card_rows:
+        raise RuntimeError("The demo card CSV contains no cards.")
     with PAYMENTS_FILE.open(encoding="utf-8-sig", newline="") as csv_file:
         payment_rows = list(csv.DictReader(csv_file))
 
@@ -125,68 +152,200 @@ def load_demo_users(apply: bool, allow_remote: bool = False) -> int:
                     ),
                     row,
                 )
-                product_exists = connection.execute(
-                    text(
-                        """
-                        SELECT product_id
-                        FROM card_product
-                        WHERE product_id = :product_id
-                        """
-                    ),
-                    {"product_id": row["product_id"]},
-                ).scalar_one_or_none()
-                if product_exists is None:
-                    raise RuntimeError(
-                        "Demo card product ID is not present in the database."
-                    )
-
-                credit_limit = int(row["credit_limit_won"])
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO user_card (
-                            user_card_id, user_id, product_id, card_status,
-                            credit_limit_won, default_preference_rank,
-                            registered_ref
-                        ) VALUES (
-                            :user_card_id, :user_id, :product_id, 'ACTIVE',
-                            :credit_limit_won, 1, 'SYNTHETIC_DEMO'
-                        )
-                        ON CONFLICT (user_card_id) DO NOTHING
-                        """
-                    ),
-                    {
-                        "user_card_id": row["user_card_id"],
-                        "user_id": row["user_id"],
-                        "product_id": row["product_id"],
-                        "credit_limit_won": credit_limit,
-                    },
-                )
-                existing_card = connection.execute(
-                    text(
-                        """
-                        SELECT user_id, product_id, credit_limit_won
-                        FROM user_card
-                        WHERE user_card_id = :user_card_id
-                        """
-                    ),
-                    {"user_card_id": row["user_card_id"]},
-                ).one_or_none()
-                if existing_card is None or tuple(existing_card) != (
-                    row["user_id"],
-                    row["product_id"],
-                    credit_limit,
-                ):
-                    raise RuntimeError(
-                        "Demo card ID conflicts with existing card data."
-                    )
-
-                for payment in payment_rows:
-                    if (
-                        payment["user_id"] != row["user_id"]
-                        or payment["user_card_id"] != row["user_card_id"]
-                    ):
+                for card in card_rows:
+                    if card["user_id"] != row["user_id"]:
                         continue
+
+                    source_user = connection.execute(
+                        text(
+                            """
+                            SELECT user_type, origin_type
+                            FROM "user"
+                            WHERE user_id = :source_user_id
+                            """
+                        ),
+                        {"source_user_id": card["source_user_id"]},
+                    ).one_or_none()
+                    if (
+                        source_user is None
+                        or source_user.user_type != "SYNTHETIC"
+                        or source_user.origin_type != "SYNTHETIC"
+                    ):
+                        raise RuntimeError(
+                            "Demo card source must be an existing synthetic user."
+                        )
+
+                    source_card = connection.execute(
+                        text(
+                            """
+                            SELECT product_id, card_status, credit_limit_won,
+                                   default_preference_rank, expires_at, active_from
+                            FROM user_card
+                            WHERE user_card_id = :source_user_card_id
+                              AND user_id = :source_user_id
+                            """
+                        ),
+                        {
+                            "source_user_card_id": card["source_user_card_id"],
+                            "source_user_id": card["source_user_id"],
+                        },
+                    ).one_or_none()
+                    expected_source_card = (
+                        card["product_id"],
+                        card["card_status"],
+                        int(card["credit_limit_won"])
+                        if card["credit_limit_won"]
+                        else None,
+                        int(card["default_preference_rank"]),
+                        card["expires_at"] or None,
+                        card["active_from"] or None,
+                    )
+                    actual_source_card = (
+                        source_card.product_id,
+                        source_card.card_status,
+                        source_card.credit_limit_won,
+                        source_card.default_preference_rank,
+                        _date_value(source_card.expires_at),
+                        _date_value(source_card.active_from),
+                    ) if source_card is not None else None
+                    if actual_source_card != expected_source_card:
+                        raise RuntimeError(
+                            "Demo card snapshot no longer matches its source card."
+                        )
+
+                    product_exists = connection.execute(
+                        text(
+                            """
+                            SELECT product_id
+                            FROM card_product
+                            WHERE product_id = :product_id
+                            """
+                        ),
+                        {"product_id": card["product_id"]},
+                    ).scalar_one_or_none()
+                    if product_exists is None:
+                        raise RuntimeError(
+                            "Demo card product ID is not present in the database."
+                        )
+
+                    source_ref = (
+                        f"SYNTHETIC_DEMO_FROM_{card['source_user_id']}:"
+                        f"{card['source_user_card_id']}"
+                    )
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO user_card (
+                                user_card_id, user_id, product_id, card_status,
+                                credit_limit_won, default_preference_rank,
+                                expires_at, active_from, registered_ref
+                            ) VALUES (
+                                :user_card_id, :user_id, :product_id, :card_status,
+                                :credit_limit_won, :default_preference_rank,
+                                :expires_at, :active_from, :registered_ref
+                            )
+                            ON CONFLICT (user_card_id) DO NOTHING
+                            """
+                        ),
+                        {
+                            "user_card_id": card["user_card_id"],
+                            "user_id": card["user_id"],
+                            "product_id": card["product_id"],
+                            "card_status": card["card_status"],
+                            "credit_limit_won": (
+                                int(card["credit_limit_won"])
+                                if card["credit_limit_won"]
+                                else None
+                            ),
+                            "default_preference_rank": int(
+                                card["default_preference_rank"]
+                            ),
+                            "expires_at": card["expires_at"] or None,
+                            "active_from": card["active_from"] or None,
+                            "registered_ref": source_ref,
+                        },
+                    )
+                    existing_card = connection.execute(
+                        text(
+                            """
+                            SELECT user_id, product_id, card_status,
+                                   credit_limit_won, default_preference_rank,
+                                   expires_at, active_from, registered_ref
+                            FROM user_card
+                            WHERE user_card_id = :user_card_id
+                            """
+                        ),
+                        {"user_card_id": card["user_card_id"]},
+                    ).one_or_none()
+                    expected_demo_card = (
+                        card["user_id"],
+                        card["product_id"],
+                        card["card_status"],
+                        int(card["credit_limit_won"])
+                        if card["credit_limit_won"]
+                        else None,
+                        int(card["default_preference_rank"]),
+                        card["expires_at"] or None,
+                        card["active_from"] or None,
+                        source_ref,
+                    )
+                    actual_demo_card = (
+                        (
+                            existing_card.user_id,
+                            existing_card.product_id,
+                            existing_card.card_status,
+                            existing_card.credit_limit_won,
+                            existing_card.default_preference_rank,
+                            _date_value(existing_card.expires_at),
+                            _date_value(existing_card.active_from),
+                            existing_card.registered_ref,
+                        )
+                        if existing_card is not None
+                        else None
+                    )
+                    if actual_demo_card != expected_demo_card:
+                        if (
+                            existing_card is None
+                            or existing_card.user_id != card["user_id"]
+                            or existing_card.registered_ref not in {
+                                "SYNTHETIC_DEMO",
+                                source_ref,
+                            }
+                        ):
+                            raise RuntimeError(
+                                "Demo card ID conflicts with non-demo card data."
+                            )
+                        connection.execute(
+                            text(
+                                """
+                                UPDATE user_card
+                                SET product_id = :product_id,
+                                    card_status = :card_status,
+                                    credit_limit_won = :credit_limit_won,
+                                    default_preference_rank = :default_preference_rank,
+                                    expires_at = :expires_at,
+                                    active_from = :active_from,
+                                    registered_ref = :registered_ref
+                                WHERE user_card_id = :user_card_id
+                                  AND user_id = :user_id
+                                  AND registered_ref IN ('SYNTHETIC_DEMO', :registered_ref)
+                                """
+                            ),
+                            _demo_card_values(card, source_ref),
+                        )
+
+                demo_card_ids = {
+                    card["user_card_id"]
+                    for card in card_rows
+                    if card["user_id"] == row["user_id"]
+                }
+                for payment in payment_rows:
+                    if payment["user_id"] != row["user_id"]:
+                        continue
+                    if payment["user_card_id"] not in demo_card_ids:
+                        raise RuntimeError(
+                            "Demo payment refers to a card not assigned to its user."
+                        )
 
                     merchant_exists = connection.execute(
                         text(

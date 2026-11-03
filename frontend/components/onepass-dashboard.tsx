@@ -589,7 +589,12 @@ function CardManager({
           <div className="card-row" key={card.user_card_id}>
             <div>
               <b>{product?.product_name ?? card.product_id}</b>
-              <small>{product?.issuer ?? '카드 상품 정보 없음'} · {(benefits[card.product_id] ?? []).map((rule) => rule.benefit_name ?? rule.benefit_type ?? '혜택').join(', ') || '혜택 정보 없음'}</small>
+              <small>
+                {product?.issuer ?? '카드 상품 정보 없음'} ·{' '}
+                {(benefits[card.product_id] ?? []).length
+                  ? `혜택 ${(benefits[card.product_id] ?? []).length}개`
+                  : '혜택 정보 없음'}
+              </small>
               {card.credit_limit_won != null && (
                 <small>
                   카드 한도 {formatWon(card.credit_limit_won)} · 이번 달 결제{' '}
@@ -600,6 +605,40 @@ function CardManager({
                     )
                     .reduce((total, payment) => total + payment.amount_won, 0))}
                 </small>
+              )}
+              {card.credit_limit_won == null && (
+                <small>
+                  한도 정보 없음 · 이번 달 결제{' '}
+                  {formatWon(payments
+                    .filter((payment) =>
+                      payment.user_card_id === card.user_card_id &&
+                      payment.event_at.slice(0, 7) === currentMonth,
+                    )
+                    .reduce((total, payment) => total + payment.amount_won, 0))}
+                </small>
+              )}
+              {(benefits[card.product_id] ?? []).length > 0 && (
+                <ul className="card-benefits">
+                  {(benefits[card.product_id] ?? []).map((rule) => {
+                    const caps = [
+                      rule.per_tx_cap_won != null
+                        ? `1회 최대 ${formatWon(rule.per_tx_cap_won)}`
+                        : null,
+                      rule.monthly_cap_won != null
+                        ? `월 최대 ${formatWon(rule.monthly_cap_won)}`
+                        : null,
+                      rule.monthly_count_cap != null
+                        ? `월 ${rule.monthly_count_cap}회`
+                        : null,
+                    ].filter((value): value is string => value !== null)
+                    return (
+                      <li key={rule.rule_id}>
+                        <span>{rule.benefit_name ?? rule.benefit_type ?? '혜택'}</span>
+                        {caps.length > 0 && <small>{caps.join(' · ')}</small>}
+                      </li>
+                    )
+                  })}
+                </ul>
               )}
             </div>
             <Toggle

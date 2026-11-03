@@ -1,2 +1,2 @@
-user_id,display_name,user_type,origin_type,user_status,wallet_id,charge_won,cashback_won,policy_support_won,student_card_id,phone_number,address,user_card_id,product_id,credit_limit_won
-USER_001,김개미,SYNTHETIC,SYNTHETIC,ACTIVE,WALLET_USER_001,30000,0,0,DEMO-STUDENT-0001,010-0000-0000,부산광역시 (데모 주소),DEMO_USER_CARD_001,BNK_CR_P07,500000
+user_id,display_name,user_type,origin_type,user_status,wallet_id,charge_won,cashback_won,policy_support_won,student_card_id,phone_number,address
+USER_001,김개미,SYNTHETIC,SYNTHETIC,ACTIVE,WALLET_USER_001,30000,0,0,DEMO-STUDENT-0001,010-0000-0000,부산광역시 (데모 주소)

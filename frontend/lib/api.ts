@@ -32,6 +32,9 @@ export type BenefitRule = {
   benefit_type: string | null
   rate: string | null
   fixed_amount_won: number | null
+  per_tx_cap_won: number | null
+  monthly_cap_won: number | null
+  monthly_count_cap: number | null
 }
 
 export type PaymentCandidate = {
