@@ -123,6 +123,8 @@ def test_wallet_balance_and_top_up_are_idempotent():
                 select(Ledger).where(Ledger.event_type == "TOPUP")
             ).all()
             assert len(topups) == 1
+            assert topups[0].approval_status == "APPROVED"
+            assert topups[0].bucket_type == "DB_CHARGE"
             assert topups[0].source_mode == "MOCK"
     finally:
         engine.dispose()
@@ -195,6 +197,7 @@ def test_user_profile_and_wallet_routes():
             assert wallet.status_code == 200
             assert wallet.json()["balance_won"] == 33_000
             assert top_up.status_code == 200
+            assert top_up.json()["approval_status"] == "APPROVED"
             assert top_up.json()["source_mode"] == "MOCK"
             assert invalid_top_up.status_code == 422
     finally:

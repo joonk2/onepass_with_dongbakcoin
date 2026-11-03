@@ -132,9 +132,9 @@ class UserService:
             event_at=now,
             event_seq=1,
             event_type="TOPUP",
-            bucket_type="CHARGE",
+            bucket_type="DB_CHARGE",
             delta_won=amount,
-            approval_status="MOCK_APPROVED",
+            approval_status="APPROVED",
             source_mode="MOCK",
             event_note="Synthetic demo top-up; no real payment was processed.",
         )
@@ -235,7 +235,7 @@ class UserService:
             charge_won=wallet_response.charge_won,
             cashback_won=wallet_response.cashback_won,
             policy_support_won=wallet_response.policy_support_won,
-            approval_status="MOCK_APPROVED",
+            approval_status="APPROVED",
             source_mode="MOCK",
             event_at=ledger.event_at or datetime.now(),
         )
