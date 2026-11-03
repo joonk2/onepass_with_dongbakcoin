@@ -7,9 +7,8 @@ from app.api.v1.api_router import api_router
 cors_origins = [
     origin.strip()
     for origin in os.getenv(
-        "BACKEND_CORS_ORIGINS",
+        "FRONTEND_URL",
         "https://onepass-with-dongbakcoin-beta.vercel.app",
-        "http://localhost:3000",
     ).split(",")
     if origin.strip()
 ]
