@@ -8,8 +8,8 @@ cors_origins = [
     origin.strip()
     for origin in os.getenv(
         "BACKEND_CORS_ORIGINS",
-        "https://onepass-with-dongbakcoin-beta.vercel.app,"
-        "http://localhost:3000,http://127.0.0.1:3000",
+        "https://onepass-with-dongbakcoin-beta.vercel.app",
+        "http://localhost:3000",
     ).split(",")
     if origin.strip()
 ]
