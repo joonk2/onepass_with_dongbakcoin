@@ -83,6 +83,11 @@ class MockPaymentResponse(BaseModel):
 
     # 동백전 지갑 결제일 때만 채워지는, 커밋된 DB 기준 결제 전후 잔액
     wallet_id: str | None = None
+    # DONGBAEK_WALLET / BANK_ACCOUNT / CREDIT_LIMIT / UNFUNDED(재원 모델 없음, 차감 안 함)
+    funding_type: str | None = None
+    # 일반 카드: 체크=연결 계좌 잔액, 신용=이용가능한도 (원장 기준 결제 전후)
+    funding_balance_before_won: int | None = None
+    funding_balance_after_won: int | None = None
     balance_before_won: int | None = None
     balance_after_payment_won: int | None = None
     balance_after_won: int | None = None

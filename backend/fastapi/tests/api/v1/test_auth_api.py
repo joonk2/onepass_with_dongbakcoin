@@ -133,6 +133,58 @@ def test_register_login_and_logout_create_a_persistent_account():
         engine.dispose()
 
 
+def test_registered_rows_use_values_allowed_by_postgres_check_constraints():
+    # SQLite does not enforce db/schema.sql CHECKs, so assert the allowed values directly.
+    from app.db_entities.user_entity import DbWallet, User
+
+    client, db, engine = create_client()
+    try:
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"username": "checkuser", "password": "secure-pass-123"},
+        )
+        assert response.status_code == 201
+        user = db.get(User, response.json()["user"]["user_id"])
+        assert user.user_type in {"SYNTHETIC", "LOGIN"}
+        assert user.origin_type in {"SYNTHETIC", "TEST_CASE"}
+        wallet = db.query(DbWallet).filter_by(user_id=user.user_id).one()
+        assert wallet.origin_type in {"SYNTHETIC", "TEST_CASE"}
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_login_fallback_flow_signs_up_unknown_user_and_rejects_wrong_password():
+    client, db, engine = create_client()
+    try:
+        creds = {"username": "FirstTimer", "password": "secure-pass-123"}
+
+        # 화면의 로그인 → (401) → 가입 순서와 같은 호출
+        assert client.post("/api/v1/auth/login", json=creds).status_code == 401
+        registered = client.post("/api/v1/auth/register", json=creds)
+        assert registered.status_code == 201
+        assert registered.json()["access_token"]
+
+        # 이후에는 같은 값으로 일반 로그인
+        again = client.post("/api/v1/auth/login", json=creds)
+        assert again.status_code == 200
+        assert again.json()["user"]["user_id"] == registered.json()["user"]["user_id"]
+
+        # 기존 아이디 + 틀린 비밀번호: 로그인 401, 가입 409이며 계정은 덮어써지지 않음
+        wrong = {"username": "firsttimer", "password": "other-pass-999"}
+        assert client.post("/api/v1/auth/login", json=wrong).status_code == 401
+        assert client.post("/api/v1/auth/register", json=wrong).status_code == 409
+        assert client.post("/api/v1/auth/login", json=creds).status_code == 200
+
+        # 형식이 잘못된 새 아이디는 가입도 거절
+        short = {"username": "newone", "password": "short"}
+        assert client.post("/api/v1/auth/login", json=short).status_code in (401, 422)
+        assert client.post("/api/v1/auth/register", json=short).status_code == 422
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_register_rejects_short_password_and_invalid_username():
     client, db, engine = create_client()
     try:

@@ -6,12 +6,12 @@ from typing import Any
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db_entities.ledger_entity import Ledger
-from app.db_entities.user_entity import DbWallet
+from app.db_entities.user_entity import Account, DbWallet
 from app.repositories.card_repository import CardRepository
 from app.repositories.merchant_repository import MerchantRepository
 from app.repositories.ledger_repository import LedgerRepository
@@ -152,7 +152,31 @@ class PaymentService:
         balance_after_payment_won = None
         balance_after_won = None
         wallet_id = wallet.wallet_id if wallet is not None else None
+        funding_type = "DONGBAEK_WALLET" if wallet is not None else "UNFUNDED"
+        funding_before_won = None
+        funding_after_won = None
+        ledger_account_id = None
+        ledger_bucket = None
         try:
+            if wallet is None:
+                funding = self._lock_card_funding(user_card, card_product)
+                if funding is not None:
+                    if self.ledger_repo.get_ledgers_by_request_id(
+                        request.request_id
+                    ):
+                        raise DuplicatePaymentError(
+                            "이미 처리된 결제 요청입니다."
+                        )
+                    funding_type, funding_before_won, ledger_account_id = (
+                        funding
+                    )
+                    if funding_before_won < request.amount_won:
+                        raise InsufficientBalanceError(
+                            "연결 계좌 잔액이 부족합니다."
+                        )
+                    funding_after_won = funding_before_won - request.amount_won
+                    ledger_bucket = "BANK_ACCOUNT"
+
             if wallet is not None:
                 # 잠금 이후 동일 request_id 재확인 (동시 중복 클릭 방지)
                 if self.ledger_repo.get_ledgers_by_request_id(
@@ -179,6 +203,8 @@ class PaymentService:
                 user_id=request.user_id,
                 user_card_id=request.user_card_id,
                 wallet_id=wallet.wallet_id if wallet is not None else None,
+                account_id=ledger_account_id,
+                bucket_type=ledger_bucket,
                 merchant_id=request.merchant_id,
                 event_at=event_at,
                 event_seq=1,
@@ -214,6 +240,9 @@ class PaymentService:
             approval_status="APPROVED",
             event_at=event_at,
             wallet_id=wallet_id,
+            funding_type=funding_type,
+            funding_balance_before_won=funding_before_won,
+            funding_balance_after_won=funding_after_won,
             balance_before_won=balance_before_won,
             balance_after_payment_won=balance_after_payment_won,
             balance_after_won=balance_after_won,
@@ -315,6 +344,43 @@ class PaymentService:
                 "결제할 동백전 지갑을 특정할 수 없습니다."
             )
         return wallets[0]
+
+    def _lock_card_funding(
+        self, user_card, product
+    ) -> tuple[str, int, str | None] | None:
+        """일반 카드의 결제 재원을 잠그고 (유형, 결제 전 가용액, 계좌ID)를 반환
+
+        account 테이블과 user_card에는 변경 가능한 잔액 컬럼이 없으므로
+        원장(ledger) 합계로 현재 값을 계산한다. 스키마 변경은 없다.
+        - BANK_CHECK: 연결 계좌 opening_balance_won + 해당 계좌 승인 원장 delta 합
+        - 신용카드(BANK_CREDIT): 한도·잔액을 차감하지 않는다(원장만 기록).
+        연결 계좌가 없으면 None을 반환해 차감 없이 승인한다.
+        """
+
+        card_type = (product.card_type if product else None) or ""
+
+        if card_type == "BANK_CHECK":
+            if not user_card.linked_account_id:
+                return None
+            account = self.db.scalars(
+                select(Account)
+                .where(Account.account_id == user_card.linked_account_id)
+                .with_for_update()
+            ).first()
+            if account is None or account.user_id != user_card.user_id:
+                raise PaymentValidationError("연결 계좌를 확인할 수 없습니다.")
+            if account.account_status != "ACTIVE":
+                raise PaymentValidationError("연결 계좌를 사용할 수 없습니다.")
+            delta = self.db.scalar(
+                select(func.coalesce(func.sum(Ledger.delta_won), 0)).where(
+                    Ledger.account_id == account.account_id,
+                    Ledger.approval_status == "APPROVED",
+                )
+            )
+            balance = (account.opening_balance_won or 0) + int(delta or 0)
+            return "BANK_ACCOUNT", balance, account.account_id
+
+        return None
 
     @staticmethod
     def _debit_wallet(wallet: DbWallet, amount_won: int) -> None:
