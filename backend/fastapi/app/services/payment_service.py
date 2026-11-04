@@ -15,6 +15,7 @@ from app.db_entities.user_entity import DbWallet
 from app.repositories.card_repository import CardRepository
 from app.repositories.merchant_repository import MerchantRepository
 from app.repositories.ledger_repository import LedgerRepository
+from app.services.dongbaek_card import is_dongbaek_wallet_card
 
 from app.schemas.payment_schema import (
     MockPaymentRequest,
@@ -28,9 +29,6 @@ from app.schemas.payment_schema import (
 
 
 logger = logging.getLogger(__name__)
-
-DONGBAEK_PRODUCT_IDS = frozenset({"PRD_DB_SYN"})
-
 
 class RecommendationEngineNotAvailable(Exception):
     """추천 엔진이 아직 연결되지 않은 경우"""
@@ -123,12 +121,13 @@ class PaymentService:
             )
 
         # 5. 혜택 계산 (지갑 잠금 전에 수행)
-        awarded_benefit_won = self._estimate_awarded_benefit(request)
+        awarded_benefit_won, benefit_reason = self._estimate_awarded_benefit(request)
 
         # 6. 동백전 지갑 결제 여부 확인 및 지갑 행 잠금
         wallet = self._lock_payment_wallet(user_card)
 
         balance_before_won = None
+        balance_after_payment_won = None
         balance_after_won = None
         wallet_id = wallet.wallet_id if wallet is not None else None
         try:
@@ -142,6 +141,7 @@ class PaymentService:
                     )
                 balance_before_won = self._wallet_total(wallet)
                 self._debit_wallet(wallet, request.amount_won)
+                balance_after_payment_won = self._wallet_total(wallet)
                 wallet.cashback_won = (
                     (wallet.cashback_won or 0) + awarded_benefit_won
                 )
@@ -169,7 +169,7 @@ class PaymentService:
                 awarded_benefit_won=awarded_benefit_won,
                 approval_status="APPROVED",
                 source_mode="MOCK",
-                event_note="모의 결제 승인",
+                event_note=f"결제 승인 (혜택: {benefit_reason})",
             )
 
             # 8. 거래 원장 저장 (지갑 잔액 변경과 같은 트랜잭션)
@@ -193,8 +193,10 @@ class PaymentService:
             event_at=event_at,
             wallet_id=wallet_id,
             balance_before_won=balance_before_won,
+            balance_after_payment_won=balance_after_payment_won,
             balance_after_won=balance_after_won,
             awarded_benefit_won=awarded_benefit_won,
+            benefit_reason=benefit_reason,
         )
 
     @staticmethod
@@ -207,25 +209,23 @@ class PaymentService:
 
     @staticmethod
     def _is_dongbaek_card(user_card, product) -> bool:
-        card_type = ((product.card_type if product else None) or "").upper()
-        if card_type.startswith("BANK"):
-            return user_card.db_wallet_id is not None
-        issuer = ((product.issuer if product else None) or "").upper()
-        name = (product.product_name if product else None) or ""
-        return (
-            user_card.db_wallet_id is not None
-            or user_card.product_id in DONGBAEK_PRODUCT_IDS
-            or "DONGBAEK" in card_type
-            or issuer == "DONGBAEKJEON"
-            or "동백전" in name
+        return is_dongbaek_wallet_card(
+            user_card.product_id,
+            product.card_type if product else None,
+            user_card.db_wallet_id,
         )
 
     # --------- 모의 결제 보조 함수 ------------
-    def _estimate_awarded_benefit(self, request: MockPaymentRequest) -> int:
-        """추천 엔진이 계산한 선택 카드의 혜택 금액(없으면 0)"""
+    def _estimate_awarded_benefit(
+        self, request: MockPaymentRequest
+    ) -> tuple[int, str]:
+        """추천 엔진과 같은 정책으로 선택 카드의 혜택 금액과 사유를 계산
+
+        계산 실패는 0원으로 바꾸지 않고 BenefitCalculationError로 알린다.
+        """
 
         if self.engine is None:
-            return 0
+            return 0, "BENEFIT_ENGINE_NOT_CONFIGURED"
 
         try:
             result = self.engine.recommend(
@@ -233,18 +233,23 @@ class PaymentService:
                 merchant_id=request.merchant_id,
                 amount_won=request.amount_won,
             )
-        except Exception:
-            logger.exception("모의 결제 혜택 계산에 실패했습니다.")
-            return 0
+        except Exception as exc:
+            logger.exception("결제 혜택 계산에 실패했습니다.")
+            raise BenefitCalculationError(
+                "혜택 계산에 실패해 결제를 처리하지 않았습니다."
+            ) from exc
 
         for candidate in result.get("candidates", []):
-            if (
-                candidate.get("user_card_id") == request.user_card_id
-                and candidate.get("eligible")
-            ):
-                return max(int(candidate.get("expected_benefit_won") or 0), 0)
+            if candidate.get("user_card_id") != request.user_card_id:
+                continue
+            if candidate.get("eligible"):
+                return (
+                    max(int(candidate.get("expected_benefit_won") or 0), 0),
+                    str(candidate.get("reason") or "BENEFIT_APPLIED"),
+                )
+            return 0, str(candidate.get("reason") or "NOT_ELIGIBLE")
 
-        return 0
+        return 0, "CARD_NOT_QUOTED"
 
     def _lock_payment_wallet(self, user_card) -> DbWallet | None:
         """동백전 카드 결제면 사용자의 활성 지갑 행을 잠가서 반환"""
@@ -431,6 +436,9 @@ class PaymentValidationError(Exception):
 
 class InsufficientBalanceError(Exception):
     """동백전 잔액 부족"""
+
+class BenefitCalculationError(Exception):
+    """혜택 계산 실패"""
 
 class PaymentNotFoundError(Exception):
     """결제 대상 정보 없음"""

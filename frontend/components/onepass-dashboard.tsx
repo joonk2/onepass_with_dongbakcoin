@@ -55,7 +55,9 @@ type PaymentSummary = {
   expectedBenefitWon: number
   awardedBenefitWon: number | null
   balanceBeforeWon: number | null
+  balanceAfterPaymentWon: number | null
   balanceAfterWon: number | null
+  benefitReason: string | null
   paidAt: string
 }
 
@@ -850,18 +852,27 @@ function HomeScreen({
             <div><dt>가맹점</dt><dd>{lastPayment.merchantName}</dd></div>
             <div><dt>결제 금액</dt><dd>{formatWon(lastPayment.amountWon)}</dd></div>
             <div><dt>결제 카드</dt><dd>{lastPayment.productName ?? '-'}</dd></div>
-            <div>
-              <dt>동백전 잔액</dt>
+            {lastPayment.balanceBeforeWon !== null && lastPayment.balanceAfterPaymentWon !== null ? (
+              <div>
+                <dt>동백전 잔액</dt>
+                <dd>{`${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(lastPayment.balanceAfterPaymentWon)}`}</dd>
+              </div>
+            ) : (
+              <div><dt>결제 승인 결과</dt><dd>승인 완료</dd></div>
+            )}
+            <div className="highlight">
+              <dt>{lastPayment.balanceBeforeWon !== null ? '받은 캐시백' : '적용 혜택'}</dt>
               <dd>
-                {lastPayment.balanceBeforeWon !== null && lastPayment.balanceAfterWon !== null
-                  ? `${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(lastPayment.balanceAfterWon)}`
-                  : '동백전 잔액 차감 없음 (동백전 지갑 결제 아님)'}
+                {lastPayment.awardedBenefitWon === null
+                  ? '확인할 수 없습니다'
+                  : lastPayment.awardedBenefitWon > 0
+                    ? `+${formatWon(lastPayment.awardedBenefitWon)}`
+                    : `0원${lastPayment.benefitReason ? ` (${lastPayment.benefitReason})` : ''}`}
               </dd>
             </div>
-            <div className="highlight">
-              <dt>받은 캐시백</dt>
-              <dd>{lastPayment.awardedBenefitWon === null ? '-' : `+${formatWon(lastPayment.awardedBenefitWon)}`}</dd>
-            </div>
+            {lastPayment.balanceAfterWon !== null && (lastPayment.awardedBenefitWon ?? 0) > 0 && (
+              <div><dt>캐시백 적립 후 잔액</dt><dd>{formatWon(lastPayment.balanceAfterWon)}</dd></div>
+            )}
           </dl>
         </section>
       )}
@@ -1818,7 +1829,9 @@ function QrPayScreen({
         expectedBenefitWon: selected.expected_benefit_won,
         awardedBenefitWon: result.awarded_benefit_won ?? (detail ? detail.awarded_benefit_won ?? 0 : null),
         balanceBeforeWon: result.balance_before_won ?? null,
+        balanceAfterPaymentWon: result.balance_after_payment_won ?? null,
         balanceAfterWon: result.balance_after_won ?? null,
+        benefitReason: result.benefit_reason ?? null,
         paidAt: result.event_at,
       })
     } catch (cause) {

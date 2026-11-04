@@ -514,8 +514,10 @@ export const api = {
       event_at: string
       wallet_id?: string | null
       balance_before_won?: number | null
+      balance_after_payment_won?: number | null
       balance_after_won?: number | null
       awarded_benefit_won?: number | null
+      benefit_reason?: string | null
     }>(
       '/payments',
       {
