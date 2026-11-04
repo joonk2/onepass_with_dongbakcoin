@@ -100,7 +100,7 @@ export default function WelcomeScreen({
           <div>
             <span>ONEPASS 소식</span>
             <time dateTime="2026-11-02">2026.11.02</time>
-            <h1 id="welcome-news-title">신규가입 환영! 첫 원패스카드를 골라 보세요</h1>
+            <h1 id="welcome-news-title">신규가입 환영! 첫 원패스카드를 골라 보세요 </h1>
           </div>
           <CreditCard size={22} aria-hidden="true" />
         </div
