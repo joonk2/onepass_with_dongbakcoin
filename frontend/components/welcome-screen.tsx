@@ -100,11 +100,10 @@ export default function WelcomeScreen({
           <div>
             <span>ONEPASS 소식</span>
             <time dateTime="2026-11-02">2026.11.02</time>
-            <h1 id="welcome-news-title">신규가입자에게 드리는 혜택!</h1>
+            <h1 id="welcome-news-title">신규가입 환영! 첫 원패스카드를 골라 보세요</h1>
           </div>
           <CreditCard size={22} aria-hidden="true" />
-        </div>
-        <p className="welcome-news-description">신규 가입자라면 아래 네 가지 카드 중 하나를 골라보세요!</p>
+        </div
         <div
           className="welcome-carousel"
           onMouseEnter={() => setPaused(true)}
