@@ -26,6 +26,7 @@ from app.db_entities.merchant_entity import Merchant
 from app.db_entities.user_entity import DbWallet, User
 from app.schemas.payment_schema import MockPaymentRequest
 from app.services.payment_service import (
+    BenefitCalculationError,
     DuplicatePaymentError,
     InsufficientBalanceError,
     PaymentService,
@@ -193,16 +194,92 @@ def test_90001_minus_12600_persists_77401_and_reports_server_balances(db):
     assert balances(db) == (77401, 0, 0)
 
 
-def test_card_recognized_as_dongbaek_by_issuer_or_name_is_debited(db):
-    db.add(CardProduct(product_id="PRD_X", product_name="동백전(유형 통합, 가상)", issuer="DONGBAEKJEON", card_type=None))
+def test_90001_minus_27000_with_2700_cashback_reports_server_balances(db):
+    wallet = db.get(DbWallet, "W1")
+    wallet.charge_won, wallet.policy_support_won, wallet.cashback_won = 90001, 0, 0
+    db.commit()
+    service = PaymentService(db=db, engine=FakeEngine(2700))
+
+    result = service.create_mock_payment(request(amount=27000))
+
+    assert result.balance_before_won == 90001
+    assert result.balance_after_payment_won == 63001
+    assert result.balance_after_won == 65701
+    assert result.awarded_benefit_won == 2700
+    assert balances(db) == (63001, 0, 2700)
+    assert service.get_payment_detail(result.tx_id).awarded_benefit_won == 2700
+
+
+def test_dongbaek_product_id_is_wallet_card_even_if_card_type_is_bank(db):
+    db.get(CardProduct, "PRD_DB_SYN").card_type = "BANK_CHECK"
+    db.commit()
+
+    result = PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request())
+
+    assert result.balance_after_won == 43000
+    assert balances(db) == (40000, 2000, 1000)
+
+
+def test_card_with_dongbaek_name_only_is_not_wallet_card(db):
+    db.add(CardProduct(product_id="PRD_X", product_name="동백전 이름만 같은 카드", issuer="DONGBAEKJEON", card_type="BANK_CREDIT"))
     db.add(UserCard(user_card_id="UC_X", user_id="U1", product_id="PRD_X", card_status="ACTIVE"))
     db.commit()
-    service = PaymentService(db=db, engine=FakeEngine(0))
 
-    result = service.create_mock_payment(request(card="UC_X", amount=12600))
+    result = PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request(card="UC_X"))
+
+    assert result.balance_before_won is None
+    assert balances(db) == (50000, 2000, 1000)
+
+
+def test_card_linked_to_wallet_is_debited(db):
+    db.add(CardProduct(product_id="PRD_L", product_name="연결 카드", card_type="BANK_CHECK"))
+    db.add(UserCard(user_card_id="UC_L", user_id="U1", product_id="PRD_L", db_wallet_id="W1", card_status="ACTIVE"))
+    db.commit()
+
+    result = PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request(card="UC_L", amount=12600))
 
     assert result.balance_after_won == 53000 - 12600
     assert balances(db) == (37400, 2000, 1000)
+
+
+def test_benefit_calculation_failure_is_not_treated_as_zero(db):
+    class BrokenEngine:
+        def recommend(self, **kwargs):
+            raise RuntimeError("engine down")
+
+    with pytest.raises(BenefitCalculationError):
+        PaymentService(db=db, engine=BrokenEngine()).create_mock_payment(request())
+
+    assert balances(db) == (50000, 2000, 1000)
+    assert db.query(Ledger).count() == 0
+
+
+def test_ineligible_candidate_records_zero_with_reason(db):
+    class IneligibleEngine:
+        def recommend(self, **kwargs):
+            return {"candidates": [{
+                "user_card_id": "UC_DB", "expected_benefit_won": 2700,
+                "eligible": False, "reason": "MERCHANT_NOT_REGISTERED",
+            }]}
+
+    result = PaymentService(db=db, engine=IneligibleEngine()).create_mock_payment(request())
+
+    assert result.awarded_benefit_won == 0
+    assert result.benefit_reason == "MERCHANT_NOT_REGISTERED"
+    assert balances(db) == (40000, 2000, 1000)
+
+
+def test_credit_card_payment_keeps_wallet_and_applies_own_benefit(db):
+    service = PaymentService(db=db, engine=FakeEngine(2700))
+
+    result = service.create_mock_payment(request(card="UC_CREDIT", amount=27000))
+
+    assert result.balance_before_won is None and result.wallet_id is None
+    assert result.awarded_benefit_won == 999
+    assert balances(db) == (50000, 2000, 1000)
+    with pytest.raises(DuplicatePaymentError):
+        service.create_mock_payment(request(card="UC_CREDIT", amount=27000))
+    assert db.query(Ledger).count() == 1
 
 
 def test_non_dongbaek_card_reports_no_wallet_balances(db):

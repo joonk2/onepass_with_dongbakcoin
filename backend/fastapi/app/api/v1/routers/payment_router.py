@@ -25,6 +25,7 @@ from app.services.payment_service import (
     PaymentNotFoundError,
     DuplicatePaymentError,
     InsufficientBalanceError,
+    BenefitCalculationError,
 )
 from app.schemas.payment_schema import PaymentDetailResponse
 from app.schemas.payment_schema import PaymentHistoryResponse
@@ -118,6 +119,12 @@ def create_mock_payment(
     except InsufficientBalanceError as exc:
         raise HTTPException(
             status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    except BenefitCalculationError as exc:
+        raise HTTPException(
+            status_code=503,
             detail=str(exc),
         ) from exc
 

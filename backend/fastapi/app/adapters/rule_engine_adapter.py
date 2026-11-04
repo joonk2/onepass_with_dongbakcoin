@@ -22,7 +22,7 @@ from app.repositories.card_repository import CardRepository
 from app.repositories.merchant_repository import MerchantRepository
 from app.repositories.policy_repository import PolicyRepository
 from app.repositories.user_repository import UserRepository
-
+from app.services.dongbaek_card import is_dongbaek_wallet_card
 
 _MODULE_DIR = Path(__file__).resolve().parents[3] / "module"
 if str(_MODULE_DIR) not in sys.path:
@@ -44,7 +44,6 @@ from onepass.p1_product_ids import SELECTED_PRODUCT_IDS  # noqa: E402
 from onepass.p1_rule_repository import P1RuleRepository  # noqa: E402
 
 
-DONGBAEK_PRODUCT_IDS = frozenset({"PRD_DB_SYN"})
 DEFAULT_LANE = "OFFLINE"
 
 
@@ -53,10 +52,12 @@ def _ensure_database_url() -> None:
         os.environ["DATABASE_URL"] = settings.DATABASE_URL
 
 
-def _is_dongbaek_product(product_id: str | None, card_type: str | None) -> bool:
-    if product_id in DONGBAEK_PRODUCT_IDS:
-        return True
-    return "DONGBAEK" in (card_type or "").upper()
+def _is_dongbaek_product(
+    product_id: str | None,
+    card_type: str | None,
+    db_wallet_id: str | None = None,
+) -> bool:
+    return is_dongbaek_wallet_card(product_id, card_type, db_wallet_id)
 
 
 def _wallet_balance_won(wallet) -> int | None:
@@ -173,7 +174,7 @@ class RuleEngineAdapter:
             product_name = product.product_name if product is not None else None
             card_type = product.card_type if product is not None else None
 
-            if _is_dongbaek_product(product_id, card_type):
+            if _is_dongbaek_product(product_id, card_type, user_card.db_wallet_id):
                 candidates.append(
                     self._quote_dongbaek(
                         user_card_id=user_card.user_card_id,

@@ -76,8 +76,10 @@ class MockPaymentResponse(BaseModel):
     # 동백전 지갑 결제일 때만 채워지는, 커밋된 DB 기준 결제 전후 잔액
     wallet_id: str | None = None
     balance_before_won: int | None = None
+    balance_after_payment_won: int | None = None
     balance_after_won: int | None = None
     awarded_benefit_won: int = 0
+    benefit_reason: str | None = None
 
 
 class PaymentDetailResponse(BaseModel):
