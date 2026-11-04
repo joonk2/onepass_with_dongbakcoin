@@ -67,9 +67,14 @@ type PaymentSummary = {
 function candidateBenefitLabel(candidate: PaymentCandidate): string {
   switch (candidate.benefit_status) {
     case 'UNRESOLVED':
+    case 'DATA_MISSING':
       return '혜택 산정 불가'
     case 'ERROR':
       return '혜택 계산 오류'
+    case 'CONDITION_NOT_MET':
+      return '혜택 조건 미충족 (0원)'
+    case 'PARTIAL':
+      return `예상 혜택 ${formatWon(candidate.expected_benefit_won)} (일부 규칙 확인 필요)`
     case 'NOT_APPLICABLE':
       return '혜택 없음'
     default:
@@ -879,7 +884,7 @@ function HomeScreen({
             <div className="highlight">
               <dt>{lastPayment.balanceBeforeWon !== null ? '받은 캐시백' : '적용 혜택'}</dt>
               <dd>
-                {lastPayment.awardedBenefitWon === null || ['UNRESOLVED', 'ERROR'].includes(lastPayment.benefitStatus ?? '')
+                {lastPayment.awardedBenefitWon === null || ['UNRESOLVED', 'DATA_MISSING', 'ERROR'].includes(lastPayment.benefitStatus ?? '')
                   ? `혜택 산정 불가${lastPayment.benefitReason ? ` (${lastPayment.benefitReason})` : ''}`
                   : lastPayment.awardedBenefitWon > 0
                     ? `+${formatWon(lastPayment.awardedBenefitWon)}`

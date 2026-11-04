@@ -92,7 +92,15 @@ export type PaymentCandidate = {
   eligible: boolean
   payable?: boolean
   payable_reason?: string | null
-  benefit_status?: 'CALCULATED' | 'NOT_APPLICABLE' | 'UNRESOLVED' | 'ERROR' | null
+  benefit_status?:
+    | 'CALCULATED'
+    | 'PARTIAL'
+    | 'CONDITION_NOT_MET'
+    | 'DATA_MISSING'
+    | 'NOT_APPLICABLE'
+    | 'UNRESOLVED'
+    | 'ERROR'
+    | null
   benefit_unit?: string | null
   reason: string | null
 }
