@@ -128,6 +128,9 @@ class PaymentService:
         # 6. 동백전 지갑 결제 여부 확인 및 지갑 행 잠금
         wallet = self._lock_payment_wallet(user_card)
 
+        balance_before_won = None
+        balance_after_won = None
+        wallet_id = wallet.wallet_id if wallet is not None else None
         try:
             if wallet is not None:
                 # 잠금 이후 동일 request_id 재확인 (동시 중복 클릭 방지)
@@ -137,10 +140,12 @@ class PaymentService:
                     raise DuplicatePaymentError(
                         "이미 처리된 결제 요청입니다."
                     )
+                balance_before_won = self._wallet_total(wallet)
                 self._debit_wallet(wallet, request.amount_won)
                 wallet.cashback_won = (
                     (wallet.cashback_won or 0) + awarded_benefit_won
                 )
+                balance_after_won = self._wallet_total(wallet)
 
             # 7. 모의 결제 데이터 생성
             tx_id = str(uuid4())
@@ -186,6 +191,33 @@ class PaymentService:
             amount_won=request.amount_won,
             approval_status="APPROVED",
             event_at=event_at,
+            wallet_id=wallet_id,
+            balance_before_won=balance_before_won,
+            balance_after_won=balance_after_won,
+            awarded_benefit_won=awarded_benefit_won,
+        )
+
+    @staticmethod
+    def _wallet_total(wallet: DbWallet) -> int:
+        return (
+            (wallet.charge_won or 0)
+            + (wallet.policy_support_won or 0)
+            + (wallet.cashback_won or 0)
+        )
+
+    @staticmethod
+    def _is_dongbaek_card(user_card, product) -> bool:
+        card_type = ((product.card_type if product else None) or "").upper()
+        if card_type.startswith("BANK"):
+            return user_card.db_wallet_id is not None
+        issuer = ((product.issuer if product else None) or "").upper()
+        name = (product.product_name if product else None) or ""
+        return (
+            user_card.db_wallet_id is not None
+            or user_card.product_id in DONGBAEK_PRODUCT_IDS
+            or "DONGBAEK" in card_type
+            or issuer == "DONGBAEKJEON"
+            or "동백전" in name
         )
 
     # --------- 모의 결제 보조 함수 ------------
@@ -222,12 +254,7 @@ class PaymentService:
             if user_card.product_id
             else None
         )
-        is_dongbaek = (
-            user_card.db_wallet_id is not None
-            or user_card.product_id in DONGBAEK_PRODUCT_IDS
-            or "DONGBAEK" in ((product.card_type if product else None) or "").upper()
-        )
-        if not is_dongbaek:
+        if not self._is_dongbaek_card(user_card, product):
             return None
 
         statement = select(DbWallet).where(
