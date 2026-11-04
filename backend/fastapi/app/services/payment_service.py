@@ -7,6 +7,7 @@ from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db_entities.ledger_entity import Ledger
@@ -169,6 +170,9 @@ class PaymentService:
             # 8. 거래 원장 저장 (지갑 잔액 변경과 같은 트랜잭션)
             self.ledger_repo.create_ledger(ledger)
             self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise DuplicatePaymentError("이미 처리된 결제 요청입니다.") from exc
         except Exception:
             self.db.rollback()
             raise

@@ -166,6 +166,21 @@ def test_ineligible_card_gets_no_benefit(db):
     assert balances(db) == (40000, 2000, 1000)
 
 
+def test_ledger_failure_rolls_back_wallet_debit(db, monkeypatch):
+    service = PaymentService(db=db, engine=FakeEngine(700))
+
+    def fail(_ledger):
+        raise RuntimeError("ledger write failed")
+
+    monkeypatch.setattr(service.ledger_repo, "create_ledger", fail)
+
+    with pytest.raises(RuntimeError):
+        service.create_mock_payment(request())
+
+    assert balances(db) == (50000, 2000, 1000)
+    assert db.query(Ledger).count() == 0
+
+
 def test_without_engine_no_benefit(db):
     service = PaymentService(db=db)
 
