@@ -47,8 +47,8 @@ class AuthService:
         wallet_id = f"WALLET_{uuid4().hex}"
         user = User(
             user_id=user_id,
-            user_type="REGISTERED",
-            origin_type="ACCOUNT",
+            user_type="LOGIN",
+            origin_type="SYNTHETIC",
             user_status="ACTIVE",
             created_at=now,
         )
@@ -79,7 +79,7 @@ class AuthService:
                 policy_support_won=0,
                 opening_balance_at=now,
                 wallet_status="ACTIVE",
-                origin_type="ACCOUNT",
+                origin_type="SYNTHETIC",
             )
         )
         token = secrets.token_urlsafe(32)
