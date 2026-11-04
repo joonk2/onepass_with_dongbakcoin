@@ -221,6 +221,27 @@ class RuleEngineAdapter:
                 )
                 continue
 
+
+            # DEMO: kb_bridge 팟카드 예상 혜택 750원 고정
+            if user_id == "USER_001" and user_card.user_card_id == "UC_USER_001_P09":
+                candidates.append(
+                    self._finalize(
+                        {
+                            "user_card_id": user_card.user_card_id,
+                            "product_id": product_id,
+                            "product_name": product_name,
+                            "expected_benefit_won": 750,
+                            "eligible": True,
+                            "benefit_status": "ELIGIBLE",
+                            "benefit_unit": "KRW",
+                            "reason": "DEMO_FIXED_750",
+                        },
+                        blocked,
+                    )
+                )
+                continue
+
+            
             try:
                 quote = quote_mvp_card(
                     card={
