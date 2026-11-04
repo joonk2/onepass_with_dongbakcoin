@@ -181,6 +181,37 @@ def test_ledger_failure_rolls_back_wallet_debit(db, monkeypatch):
     assert db.query(Ledger).count() == 0
 
 
+def test_90001_minus_12600_persists_77401_and_reports_server_balances(db):
+    wallet = db.get(DbWallet, "W1")
+    wallet.charge_won, wallet.policy_support_won, wallet.cashback_won = 90001, 0, 0
+    db.commit()
+    service = PaymentService(db=db, engine=FakeEngine(0))
+
+    result = service.create_mock_payment(request(amount=12600))
+
+    assert (result.balance_before_won, result.balance_after_won) == (90001, 77401)
+    assert balances(db) == (77401, 0, 0)
+
+
+def test_card_recognized_as_dongbaek_by_issuer_or_name_is_debited(db):
+    db.add(CardProduct(product_id="PRD_X", product_name="동백전(유형 통합, 가상)", issuer="DONGBAEKJEON", card_type=None))
+    db.add(UserCard(user_card_id="UC_X", user_id="U1", product_id="PRD_X", card_status="ACTIVE"))
+    db.commit()
+    service = PaymentService(db=db, engine=FakeEngine(0))
+
+    result = service.create_mock_payment(request(card="UC_X", amount=12600))
+
+    assert result.balance_after_won == 53000 - 12600
+    assert balances(db) == (37400, 2000, 1000)
+
+
+def test_non_dongbaek_card_reports_no_wallet_balances(db):
+    result = PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(
+        request(card="UC_CREDIT")
+    )
+    assert result.balance_before_won is None and result.balance_after_won is None
+
+
 def test_without_engine_no_benefit(db):
     service = PaymentService(db=db)
 

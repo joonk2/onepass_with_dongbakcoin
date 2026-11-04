@@ -55,6 +55,7 @@ type PaymentSummary = {
   expectedBenefitWon: number
   awardedBenefitWon: number | null
   balanceBeforeWon: number | null
+  balanceAfterWon: number | null
   paidAt: string
 }
 
@@ -852,9 +853,9 @@ function HomeScreen({
             <div>
               <dt>동백전 잔액</dt>
               <dd>
-                {lastPayment.balanceBeforeWon !== null && wallet
-                  ? `${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(wallet.balance_won)}`
-                  : wallet ? formatWon(wallet.balance_won) : '확인 불가'}
+                {lastPayment.balanceBeforeWon !== null && lastPayment.balanceAfterWon !== null
+                  ? `${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(lastPayment.balanceAfterWon)}`
+                  : '동백전 잔액 차감 없음 (동백전 지갑 결제 아님)'}
               </dd>
             </div>
             <div className="highlight">
@@ -976,10 +977,13 @@ function CardDetail({
         merchant_id: merchantId,
         amount_won: Number(amount),
       })
-      setSuccess(`결제 체험이 완료되었습니다. 실제 결제는 발생하지 않았습니다. 거래 ID: ${result.tx_id}`)
+      const balanceNote = result.balance_after_won != null && result.balance_before_won != null
+        ? ` 동백전 잔액 ${formatWon(result.balance_before_won)} → ${formatWon(result.balance_after_won)}.`
+        : ''
+      setSuccess(`결제가 완료되었습니다.${balanceNote} 금융기관 승인이 아닌 서비스 내 결제입니다. 거래 ID: ${result.tx_id}`)
       await onPaymentComplete()
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : '결제 체험을 완료하지 못했습니다.')
+      onError(cause instanceof Error ? cause.message : '결제를 완료하지 못했습니다.')
     } finally {
       setPaying(false)
     }
@@ -1797,7 +1801,6 @@ function QrPayScreen({
     setPaying(true)
     setPayError('')
     requestIdRef.current ??= newRequestId()
-    const balanceBeforeWon = wallet?.balance_won ?? null
     try {
       const result = await api.createPayment({
         request_id: requestIdRef.current,
@@ -1813,8 +1816,9 @@ function QrPayScreen({
         amountWon,
         productName: selected.product_name,
         expectedBenefitWon: selected.expected_benefit_won,
-        awardedBenefitWon: detail ? detail.awarded_benefit_won ?? 0 : null,
-        balanceBeforeWon,
+        awardedBenefitWon: result.awarded_benefit_won ?? (detail ? detail.awarded_benefit_won ?? 0 : null),
+        balanceBeforeWon: result.balance_before_won ?? null,
+        balanceAfterWon: result.balance_after_won ?? null,
         paidAt: result.event_at,
       })
     } catch (cause) {

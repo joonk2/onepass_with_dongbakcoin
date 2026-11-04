@@ -508,7 +508,15 @@ export const api = {
     merchant_id: string
     amount_won: number
   }) =>
-    request<{ tx_id: string; approval_status: string; event_at: string }>(
+    request<{
+      tx_id: string
+      approval_status: string
+      event_at: string
+      wallet_id?: string | null
+      balance_before_won?: number | null
+      balance_after_won?: number | null
+      awarded_benefit_won?: number | null
+    }>(
       '/payments',
       {
         method: 'POST',
