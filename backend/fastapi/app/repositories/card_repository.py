@@ -114,7 +114,11 @@ class CardRepository:
         user_card.card_status = "INACTIVE"
 
         self.db.add(user_card)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
         self.db.refresh(user_card)
 
         return user_card

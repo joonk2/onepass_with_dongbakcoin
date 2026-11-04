@@ -48,6 +48,14 @@ class UserCard(Base):
     active_from: Mapped[date | None] = mapped_column(Date)
     active_to: Mapped[date | None] = mapped_column(Date)
 
+    @property
+    def card_last4(self) -> str | None:
+        return None
+
+    @property
+    def prev_month_spend_won(self) -> int | None:
+        return None
+
 
 class CardMonthClose(Base):
     """카드별 월 마감 집계"""

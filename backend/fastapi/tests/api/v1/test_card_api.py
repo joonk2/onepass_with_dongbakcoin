@@ -63,6 +63,7 @@ class FakeCardService:
         self,
         user_id: str,
         product_id: str,
+        **details,
     ):
         if user_id != "USER_001":
             raise ValueError("사용자를 찾을 수 없습니다.")
@@ -321,6 +322,43 @@ def test_create_user_card_missing_product_id():
         )
 
     assert response.status_code == 422
+
+
+def test_create_user_card_rejects_invalid_details():
+    bad_payloads = [
+        {"card_number": "1234"},
+        {"card_number": "abcd" * 4},
+        {"card_cvc": "12"},
+        {"expiry_month": 5},
+        {"expiry_month": 13, "expiry_year": 2030},
+        {"prev_month_spend_won": -1},
+    ]
+    with create_test_client() as client:
+        for extra in bad_payloads:
+            response = client.post(
+                "/api/v1/users/USER_001/cards",
+                json={"product_id": "CARD_001", **extra},
+            )
+            assert response.status_code == 422, extra
+
+
+def test_create_user_card_accepts_details_and_hides_secrets():
+    with create_test_client() as client:
+        response = client.post(
+            "/api/v1/users/USER_001/cards",
+            json={
+                "product_id": "CARD_001",
+                "card_number": "1234 5678 9012 3456",
+                "card_cvc": "123",
+                "expiry_month": 12,
+                "expiry_year": 2099,
+                "prev_month_spend_won": 300000,
+            },
+        )
+
+    assert response.status_code == 201
+    assert "card_number" not in response.json()
+    assert "card_cvc" not in response.json()
 
 
 

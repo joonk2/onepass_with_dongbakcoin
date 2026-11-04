@@ -53,6 +53,7 @@ class AuthService:
             created_at=now,
         )
         self.db.add(user)
+        self.db.flush()  # 모델에 relationship이 없어 FK 부모(user)를 먼저 INSERT해야 함
         self.db.add(
             UserCredential(
                 username=normalized_username,
