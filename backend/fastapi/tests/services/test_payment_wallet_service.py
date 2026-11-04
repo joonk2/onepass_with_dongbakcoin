@@ -1,5 +1,5 @@
 import os
-
+from datetime import date
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import pytest
@@ -30,6 +30,7 @@ from app.services.payment_service import (
     DuplicatePaymentError,
     InsufficientBalanceError,
     PaymentService,
+    PaymentValidationError,
 )
 
 TABLES = [
@@ -287,6 +288,114 @@ def test_non_dongbaek_card_reports_no_wallet_balances(db):
         request(card="UC_CREDIT")
     )
     assert result.balance_before_won is None and result.balance_after_won is None
+
+
+def test_190001_minus_30000_with_3000_benefit(db):
+    wallet = db.get(DbWallet, "W1")
+    wallet.charge_won, wallet.policy_support_won, wallet.cashback_won = 190001, 0, 0
+    db.commit()
+    service = PaymentService(db=db, engine=FakeEngine(3000))
+
+    result = service.create_mock_payment(request(amount=30000))
+
+    assert result.balance_before_won == 190001
+    assert result.balance_after_payment_won == 160001
+    assert result.awarded_benefit_won == 3000
+    assert result.benefit_status == "CALCULATED"
+    assert balances(db) == (160001, 0, 3000)
+    assert service.get_payment_detail(result.tx_id).awarded_benefit_won == 3000
+
+
+def test_zero_benefit_unresolved_credit_card_is_still_payable(db):
+    class UnresolvedEngine:
+        def recommend(self, **kwargs):
+            return {"candidates": [{
+                "user_card_id": "UC_CREDIT", "expected_benefit_won": 0,
+                "eligible": False, "benefit_status": "UNRESOLVED",
+                "reason": "UNRESOLVED_RULES",
+            }]}
+
+    result = PaymentService(db=db, engine=UnresolvedEngine()).create_mock_payment(
+        request(card="UC_CREDIT")
+    )
+
+    assert result.approval_status == "APPROVED"
+    assert result.benefit_status == "UNRESOLVED"
+    assert result.awarded_benefit_won == 0
+    assert balances(db) == (50000, 2000, 1000)
+
+
+@pytest.mark.parametrize("field,value", [("card_status", "SUSPENDED"), ("card_status", "INACTIVE")])
+def test_suspended_or_inactive_card_is_rejected(db, field, value):
+    setattr(db.get(UserCard, "UC_CREDIT"), field, value)
+    db.commit()
+
+    with pytest.raises(PaymentValidationError):
+        PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request(card="UC_CREDIT"))
+
+    assert db.query(Ledger).count() == 0
+
+
+def test_inactive_product_and_expired_card_are_rejected(db):
+    db.get(CardProduct, "CREDIT_1").product_status = "SUSPENDED"
+    db.commit()
+    with pytest.raises(PaymentValidationError):
+        PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request(card="UC_CREDIT"))
+
+    db.get(CardProduct, "CREDIT_1").product_status = "ACTIVE"
+    db.get(UserCard, "UC_CREDIT").expires_at = date(2020, 1, 1)
+    db.commit()
+    with pytest.raises(PaymentValidationError):
+        PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request(card="UC_CREDIT"))
+
+
+def test_dongbaek_payment_rejected_at_unregistered_merchant(db):
+    db.get(Merchant, "M1").dongbaek_status = "NOT_REGISTERED"
+    db.commit()
+
+    with pytest.raises(PaymentValidationError):
+        PaymentService(db=db, engine=FakeEngine(0)).create_mock_payment(request())
+
+    assert balances(db) == (50000, 2000, 1000)
+    assert db.query(Ledger).count() == 0
+
+
+def _dongbaek_quote(balance, amount, merchant_status="REGISTERED", rate="0.1"):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from app.adapters.rule_engine_adapter import DongbaekInputs, RuleEngineAdapter
+
+    return RuleEngineAdapter()._quote_dongbaek(
+        user_card_id="UC_DB",
+        product_id="PRD_DB_SYN",
+        product_name="동백전",
+        merchant=SimpleNamespace(dongbaek_status=merchant_status),
+        amount_won=amount,
+        inputs=DongbaekInputs(balance, Decimal(rate) if rate is not None else None, 100000),
+    )
+
+
+def test_recommend_quote_30000_gives_3000_cashback_and_payable():
+    quote = _dongbaek_quote(190001, 30000)
+
+    assert quote["expected_benefit_won"] == 3000
+    assert quote["benefit_status"] == "CALCULATED"
+    assert quote["payable"] is True
+
+
+def test_recommend_quote_separates_payable_from_benefit():
+    short = _dongbaek_quote(10000, 30000)
+    assert (short["payable"], short["payable_reason"]) == (False, "INSUFFICIENT_BALANCE")
+    assert short["benefit_status"] == "NOT_APPLICABLE"
+
+    unknown_policy = _dongbaek_quote(190001, 30000, rate=None)
+    assert unknown_policy["payable"] is True
+    assert unknown_policy["benefit_status"] == "UNRESOLVED"
+    assert unknown_policy["expected_benefit_won"] == 0
+
+    no_wallet = _dongbaek_quote(None, 30000)
+    assert no_wallet["payable_reason"] == "WALLET_NOT_FOUND"
 
 
 def test_without_engine_no_benefit(db):

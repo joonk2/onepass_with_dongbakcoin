@@ -90,6 +90,10 @@ export type PaymentCandidate = {
   product_name: string | null
   expected_benefit_won: number
   eligible: boolean
+  payable?: boolean
+  payable_reason?: string | null
+  benefit_status?: 'CALCULATED' | 'NOT_APPLICABLE' | 'UNRESOLVED' | 'ERROR' | null
+  benefit_unit?: string | null
   reason: string | null
 }
 
@@ -518,6 +522,7 @@ export const api = {
       balance_after_won?: number | null
       awarded_benefit_won?: number | null
       benefit_reason?: string | null
+      benefit_status?: string | null
     }>(
       '/payments',
       {

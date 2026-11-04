@@ -21,7 +21,15 @@ class PaymentMethodCandidate(BaseModel):
     product_name: str | None = None
 
     expected_benefit_won: int = Field(ge=0)
+    # eligible: 혜택이 확정 산정되었는지 (결제 가능 여부가 아님)
     eligible: bool
+    # 결제 가능 여부는 혜택과 별개로 판단한다
+    payable: bool = True
+    payable_reason: str | None = None
+    # CALCULATED / NOT_APPLICABLE / UNRESOLVED / ERROR
+    benefit_status: str | None = None
+    # CASH / POINT / CASHBACK 등 혜택 유형
+    benefit_unit: str | None = None
 
     reason: str | None = None
 
@@ -80,6 +88,7 @@ class MockPaymentResponse(BaseModel):
     balance_after_won: int | None = None
     awarded_benefit_won: int = 0
     benefit_reason: str | None = None
+    benefit_status: str | None = None
 
 
 class PaymentDetailResponse(BaseModel):
