@@ -103,7 +103,7 @@ export default function WelcomeScreen({
             <h1 id="welcome-news-title">신규가입 환영! 첫 원패스카드를 골라 보세요 </h1>
           </div>
           <CreditCard size={22} aria-hidden="true" />
-        </div
+        </div>
         <div
           className="welcome-carousel"
           onMouseEnter={() => setPaused(true)}
