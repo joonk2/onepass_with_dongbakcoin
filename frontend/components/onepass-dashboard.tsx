@@ -45,7 +45,7 @@ import {
 import { merchantIdFromSearch, resolveQrMerchant } from '@/lib/qr-payment'
 
 type Screen = 'home' | 'card' | 'manage' | 'platform' | 'recharge' | 'report' | 'qr-scan' | 'qr-pay' | 'api-tools'
-type EntryScreen = 'welcome' | 'auth'
+type EntryScreen = 'welcome' | 'auth' | 'qr'
 
 type PaymentSummary = {
   txId: string
@@ -160,7 +160,7 @@ export default function OnePassDashboard() {
     if (deepLinkMerchantId) {
       setQrMerchantId(deepLinkMerchantId)
       setScreen('qr-pay')
-      setEntryScreen('auth')
+      setEntryScreen('qr')
     }
   }, [])
 
@@ -171,6 +171,7 @@ export default function OnePassDashboard() {
       setLoading(false)
       setAuthMessage('로그인이 만료되었습니다. 다시 로그인해 주세요.')
       setEntryScreen('auth')
+      // 결제 중이던 가맹점 ID(qrMerchantId)와 qr-pay 화면은 유지해 재로그인 후 이어서 결제한다.
     }
     window.addEventListener('onepass:auth-expired', handleExpiredSession)
     return () => window.removeEventListener('onepass:auth-expired', handleExpiredSession)
@@ -389,6 +390,18 @@ export default function OnePassDashboard() {
 
   const handleQrPaid = async (summary: PaymentSummary) => {
     setLastPayment(summary)
+    // 다른 조회가 실패해도 DB에 반영된 잔액과 결제내역은 항상 다시 읽는다.
+    if (userId) {
+      const [freshWallet, freshHistory] = await Promise.allSettled([
+        api.getWalletBalance(userId),
+        api.getPaymentHistory(userId),
+      ])
+      if (freshWallet.status === 'fulfilled') {
+        setWallet(freshWallet.value)
+        setWalletError('')
+      }
+      if (freshHistory.status === 'fulfilled') setPayments(freshHistory.value.payments)
+    }
     await loadData()
     leaveQrPay()
   }
@@ -414,6 +427,7 @@ export default function OnePassDashboard() {
       writeAuthSession(null)
       setAuthSession(null)
       setScreen('home')
+      setQrMerchantId('')
       setLastPayment(null)
       setEntryScreen('welcome')
       setLoading(false)
@@ -424,6 +438,23 @@ export default function OnePassDashboard() {
     return <main className="app-shell auth-loading"><LoaderCircle className="spin" size={24} /></main>
   }
   if (!authSession) {
+    if (entryScreen === 'qr' && qrMerchantId) {
+      return (
+        <GuestQrPayScreen
+          merchantId={qrMerchantId}
+          onLogin={() => {
+            setAuthMessage('로그인하면 이 가맹점에서 결제를 이어갈 수 있습니다.')
+            setEntryScreen('auth')
+          }}
+          onBack={() => {
+            setQrMerchantId('')
+            setScreen('home')
+            window.history.replaceState(null, '', '/')
+            setEntryScreen('welcome')
+          }}
+        />
+      )
+    }
     if (entryScreen === 'welcome') {
       return <WelcomeScreen notice={authMessage} onLogin={() => {
         setAuthMessage('')
@@ -434,7 +465,7 @@ export default function OnePassDashboard() {
       <AuthScreen
         notice={authMessage}
         onAuthenticated={handleAuthenticated}
-        onBack={() => setEntryScreen('welcome')}
+        onBack={() => setEntryScreen(qrMerchantId ? 'qr' : 'welcome')}
       />
     )
   }
@@ -600,6 +631,59 @@ export default function OnePassDashboard() {
           </div>
         </div>
       )}
+    </main>
+  )
+}
+
+function GuestQrPayScreen({
+  merchantId,
+  onLogin,
+  onBack,
+}: {
+  merchantId: string
+  onLogin: () => void
+  onBack: () => void
+}) {
+  const [merchant, setMerchant] = useState<Merchant | null>(null)
+  const [merchantError, setMerchantError] = useState('')
+
+  useEffect(() => {
+    const controller = new AbortController()
+    api.getMerchant(merchantId, { signal: controller.signal })
+      .then((result) => {
+        if (!controller.signal.aborted) setMerchant(result)
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return
+        setMerchantError(
+          cause instanceof ApiError && cause.status === 404
+            ? '등록되지 않은 가맹점 QR 코드입니다.'
+            : '가맹점 정보를 불러오지 못했습니다.',
+        )
+      })
+    return () => controller.abort()
+  }, [merchantId])
+
+  return (
+    <main className="app-shell">
+      <div className="screen-content detail-screen qr-pay-screen">
+        <div className="detail-head">
+          <button onClick={onBack} aria-label="뒤로"><ArrowLeft size={19} /></button>
+          <strong>QR 결제</strong>
+          <span aria-hidden="true" />
+        </div>
+        <section className="qr-pay-merchant">
+          <span>결제할 가맹점</span>
+          <strong>{merchant ? merchant.merchant_name ?? merchant.merchant_id : merchantError || '가맹점 확인 중…'}</strong>
+          {merchant && <small>{merchant.merchant_id}</small>}
+        </section>
+        <section className="pay-section">
+          <p className="auth-notice" role="status">결제는 로그인 후 진행할 수 있습니다.</p>
+          <button type="button" className="primary-action qr-pay-submit" disabled={!merchant} onClick={onLogin}>
+            로그인하고 결제하기
+          </button>
+        </section>
+      </div>
     </main>
   )
 }
