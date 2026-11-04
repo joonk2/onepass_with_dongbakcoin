@@ -525,6 +525,9 @@ export const api = {
       approval_status: string
       event_at: string
       wallet_id?: string | null
+      funding_type?: string | null
+      funding_balance_before_won?: number | null
+      funding_balance_after_won?: number | null
       balance_before_won?: number | null
       balance_after_payment_won?: number | null
       balance_after_won?: number | null
