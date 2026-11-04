@@ -58,6 +58,9 @@ type PaymentSummary = {
   balanceBeforeWon: number | null
   balanceAfterPaymentWon: number | null
   balanceAfterWon: number | null
+  fundingType: string | null
+  fundingBeforeWon: number | null
+  fundingAfterWon: number | null
   benefitReason: string | null
   benefitStatus: string | null
   paidAt: string
@@ -533,6 +536,8 @@ export default function OnePassDashboard() {
                 walletError={walletError}
                 payments={approvedPayments}
                 dongbaekProduct={dongbaekProduct}
+                products={products}
+                userCards={activeCards}
                 lastPayment={lastPayment}
                 onDismissLastPayment={() => setLastPayment(null)}
                 onOpenCard={() => setScreen('manage')}
@@ -733,9 +738,25 @@ function AuthScreen({
     setError('')
     try {
       const credentials = { username: username.trim(), password }
-      const session = registering
-        ? await api.register(credentials)
-        : await api.login(credentials)
+      let session: AuthSession
+      if (registering) {
+        session = await api.register(credentials)
+      } else {
+        try {
+          session = await api.login(credentials)
+        } catch (loginCause) {
+          if (!(loginCause instanceof ApiError) || loginCause.status !== 401) throw loginCause
+          // 없는 아이디면 가입 후 바로 시작하고, 이미 있는 아이디면 비밀번호 오류로 안내한다
+          try {
+            session = await api.register(credentials)
+          } catch (registerCause) {
+            if (registerCause instanceof ApiError && registerCause.status === 409) {
+              throw new Error('비밀번호가 올바르지 않습니다.')
+            }
+            throw registerCause
+          }
+        }
+      }
       onAuthenticated(session)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '요청을 완료하지 못했습니다.')
@@ -801,7 +822,9 @@ function AuthScreen({
               required
             />
           </label>
-          {registering && <p className="auth-hint">아이디는 영문·숫자·._- 조합 3~32자, 비밀번호는 8자 이상으로 입력해 주세요.</p>}
+          {registering
+            ? <p className="auth-hint">아이디는 영문·숫자·._- 조합 3~32자, 비밀번호는 8자 이상으로 입력해 주세요.</p>
+            : <p className="auth-hint">처음 사용하는 아이디로 로그인하면 자동으로 가입됩니다. (비밀번호 8자 이상)</p>}
           {notice && <p className="auth-notice" role="status">{notice}</p>}
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button className="auth-submit" type="submit" disabled={pending}>
@@ -820,6 +843,8 @@ function HomeScreen({
   walletError,
   payments,
   dongbaekProduct,
+  products,
+  userCards,
   lastPayment,
   onDismissLastPayment,
   onOpenCard,
@@ -833,6 +858,8 @@ function HomeScreen({
   walletError: string
   payments: PaymentRecord[]
   dongbaekProduct: CardProduct | null
+  products: CardProduct[]
+  userCards: UserCard[]
   lastPayment: PaymentSummary | null
   onDismissLastPayment: () => void
   onOpenCard: () => void
@@ -842,6 +869,36 @@ function HomeScreen({
   onOpenMenu: () => void
 }) {
   const total = payments.reduce((sum, payment) => sum + payment.amount_won, 0)
+  const [activeSlide, setActiveSlide] = useState(0)
+  const dongiCard = userCards.find((card) => {
+    const product = products.find((item) => item.product_id === card.product_id)
+    return product ? isDongbaekProduct(product) : false
+  })
+  const homeSlides: CardSlide[] = [
+    {
+      key: 'dongi',
+      title: dongbaekProduct?.product_name ?? 'ONEPASS 카드',
+      issuer: dongbaekProduct?.issuer ?? '부산시민플랫폼',
+      holder: userName,
+      isDongi: true,
+      balanceWon: wallet?.balance_won ?? null,
+      rules: [],
+    },
+    ...userCards
+      .filter((card) => card.user_card_id !== dongiCard?.user_card_id)
+      .map((card, index): CardSlide => {
+        const product = products.find((item) => item.product_id === card.product_id)
+        return {
+          key: card.user_card_id,
+          title: product?.product_name ?? card.product_id,
+          issuer: product?.issuer ?? '카드 상품 정보 없음',
+          holder: userName,
+          isDongi: false,
+          tone: index % 4,
+          rules: [],
+        }
+      }),
+  ]
   return (
     <div className="screen-content">
       <div className="user-row">
@@ -849,20 +906,15 @@ function HomeScreen({
         <strong>{userName ?? '프로필 정보 미등록'}</strong>
         <div className="user-actions"><Bell size={18} /><button onClick={onOpenMenu} aria-label="메뉴"><Menu size={20} /></button></div>
       </div>
-      <button className="home-balance-card" onClick={onOpenCard} aria-label="내 카드 보기">
-        <DongiImage
-          variant="big"
-          alt="동이 캐릭터가 그려진 OnePass 카드"
-          className="home-balance-image"
-          priority
-        />
-        <span className="home-balance-overlay">
-          <span className="home-balance-card-name">{dongbaekProduct?.product_name ?? 'ONEPASS 카드'}</span>
-          <span className="home-balance-label">사용 가능 잔액</span>
-          <strong>{wallet ? formatWon(wallet.balance_won) : '잔액을 확인할 수 없습니다'}</strong>
-          <span className="home-balance-summary">{payments.length}건 결제 · {formatWon(total)}</span>
-        </span>
-      </button>
+      <CardCarousel
+        slides={homeSlides}
+        activeIndex={activeSlide}
+        onChange={setActiveSlide}
+        onOpen={onOpenCard}
+      />
+      <p className="home-balance-summary" style={{ margin: '0 0 12px', textAlign: 'center' }}>
+        {payments.length}건 결제 · {formatWon(total)}
+      </p>
       {lastPayment && (
         <section className="payment-result-banner" role="status" aria-live="polite">
           <div className="payment-result-head">
@@ -877,6 +929,11 @@ function HomeScreen({
               <div>
                 <dt>동백전 잔액</dt>
                 <dd>{`${formatWon(lastPayment.balanceBeforeWon)} → ${formatWon(lastPayment.balanceAfterPaymentWon)}`}</dd>
+              </div>
+            ) : lastPayment.fundingBeforeWon !== null && lastPayment.fundingAfterWon !== null ? (
+              <div>
+                <dt>연결 계좌 잔액</dt>
+                <dd>{`${formatWon(lastPayment.fundingBeforeWon)} → ${formatWon(lastPayment.fundingAfterWon)}`}</dd>
               </div>
             ) : (
               <div><dt>결제 승인 결과</dt><dd>승인 완료</dd></div>
@@ -1111,10 +1168,12 @@ function CardCarousel({
   slides,
   activeIndex,
   onChange,
+  onOpen,
 }: {
   slides: CardSlide[]
   activeIndex: number
   onChange: (index: number) => void
+  onOpen?: () => void
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [paused, setPaused] = useState(false)
@@ -1172,7 +1231,7 @@ function CardCarousel({
           <div
             className={`carousel-slide ${index === activeIndex ? 'current' : ''}`}
             key={slide.key}
-            onClick={() => index !== activeIndex && goTo(index)}
+            onClick={() => (index !== activeIndex ? goTo(index) : onOpen?.())}
           >
             {slide.isDongi ? (
               <div className="carousel-card dongi">
@@ -1852,6 +1911,9 @@ function QrPayScreen({
         balanceBeforeWon: result.balance_before_won ?? null,
         balanceAfterPaymentWon: result.balance_after_payment_won ?? null,
         balanceAfterWon: result.balance_after_won ?? null,
+        fundingType: result.funding_type ?? null,
+        fundingBeforeWon: result.funding_balance_before_won ?? null,
+        fundingAfterWon: result.funding_balance_after_won ?? null,
         benefitReason: result.benefit_reason ?? null,
         benefitStatus: result.benefit_status ?? null,
         paidAt: result.event_at,
