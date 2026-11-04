@@ -23,6 +23,7 @@ from app.repositories.merchant_repository import MerchantRepository
 from app.repositories.policy_repository import PolicyRepository
 from app.repositories.user_repository import UserRepository
 from app.services.card_payability import card_block_reason
+from app.services.benefit_quote import classify_quote
 from app.services.dongbaek_card import is_dongbaek_wallet_card
 
 _MODULE_DIR = Path(__file__).resolve().parents[3] / "module"
@@ -252,9 +253,9 @@ class RuleEngineAdapter:
                 )
                 continue
 
-            benefit = int(quote.get("estimated_value_won") or 0)
             status = quote.get("status")
             eligible = status == "SIMULATED_COMPARABLE"
+            outcome = classify_quote(quote)
 
             candidates.append(
                 self._finalize(
@@ -262,13 +263,11 @@ class RuleEngineAdapter:
                         "user_card_id": user_card.user_card_id,
                         "product_id": product_id,
                         "product_name": product_name,
-                        "expected_benefit_won": max(benefit, 0),
+                        "expected_benefit_won": outcome["expected_benefit_won"],
                         "eligible": eligible,
-                        "benefit_status": (
-                            "CALCULATED" if eligible else "UNRESOLVED"
-                        ),
-                        "benefit_unit": _best_rule_unit(quote),
-                        "reason": _best_rule_reason(quote),
+                        "benefit_status": outcome["benefit_status"],
+                        "benefit_unit": outcome["benefit_unit"],
+                        "reason": outcome["reason"],
                     },
                     blocked,
                 )
