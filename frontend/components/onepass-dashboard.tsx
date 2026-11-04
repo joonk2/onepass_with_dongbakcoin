@@ -37,6 +37,7 @@ import {
   type Merchant,
   type PaymentRecord,
   type PaymentRecommendation,
+  type PaymentCandidate,
   type UserCard,
   type UserIdentityCard,
   type UserProfile,
@@ -58,7 +59,22 @@ type PaymentSummary = {
   balanceAfterPaymentWon: number | null
   balanceAfterWon: number | null
   benefitReason: string | null
+  benefitStatus: string | null
   paidAt: string
+}
+
+// 혜택 산정 실패/미확정을 0원으로 보이지 않게 구분한다
+function candidateBenefitLabel(candidate: PaymentCandidate): string {
+  switch (candidate.benefit_status) {
+    case 'UNRESOLVED':
+      return '혜택 산정 불가'
+    case 'ERROR':
+      return '혜택 계산 오류'
+    case 'NOT_APPLICABLE':
+      return '혜택 없음'
+    default:
+      return `예상 혜택 ${formatWon(candidate.expected_benefit_won)}`
+  }
 }
 
 const newRequestId = () =>
@@ -863,8 +879,8 @@ function HomeScreen({
             <div className="highlight">
               <dt>{lastPayment.balanceBeforeWon !== null ? '받은 캐시백' : '적용 혜택'}</dt>
               <dd>
-                {lastPayment.awardedBenefitWon === null
-                  ? '확인할 수 없습니다'
+                {lastPayment.awardedBenefitWon === null || ['UNRESOLVED', 'ERROR'].includes(lastPayment.benefitStatus ?? '')
+                  ? `혜택 산정 불가${lastPayment.benefitReason ? ` (${lastPayment.benefitReason})` : ''}`
                   : lastPayment.awardedBenefitWon > 0
                     ? `+${formatWon(lastPayment.awardedBenefitWon)}`
                     : `0원${lastPayment.benefitReason ? ` (${lastPayment.benefitReason})` : ''}`}
@@ -1832,6 +1848,7 @@ function QrPayScreen({
         balanceAfterPaymentWon: result.balance_after_payment_won ?? null,
         balanceAfterWon: result.balance_after_won ?? null,
         benefitReason: result.benefit_reason ?? null,
+        benefitStatus: result.benefit_status ?? null,
         paidAt: result.event_at,
       })
     } catch (cause) {
@@ -1896,15 +1913,15 @@ function QrPayScreen({
                         <button
                           type="button"
                           className="candidate-select"
-                          disabled={paying || !candidate.eligible}
+                          disabled={paying || candidate.payable === false}
                           aria-pressed={candidate.user_card_id === selectedCardId}
                           onClick={() => selectCard(candidate.user_card_id)}
                         >
                           <span>
                             <b>{candidate.product_name ?? '카드 상품'}{candidate.user_card_id === recommendation.recommended_user_card_id ? ' · 추천' : ''}</b>
-                            <small>{candidate.eligible ? '결제 가능' : '결제 불가'}</small>
+                            <small>{candidate.payable === false ? `결제 불가 (${candidate.payable_reason ?? '사용 조건 미충족'})` : '결제 가능'}</small>
                           </span>
-                          <strong>예상 혜택 {formatWon(candidate.expected_benefit_won)}</strong>
+                          <strong>{candidateBenefitLabel(candidate)}</strong>
                         </button>
                       </li>
                     ))}

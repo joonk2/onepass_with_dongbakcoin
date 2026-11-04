@@ -22,6 +22,7 @@ from app.repositories.card_repository import CardRepository
 from app.repositories.merchant_repository import MerchantRepository
 from app.repositories.policy_repository import PolicyRepository
 from app.repositories.user_repository import UserRepository
+from app.services.card_payability import card_block_reason
 from app.services.dongbaek_card import is_dongbaek_wallet_card
 
 _MODULE_DIR = Path(__file__).resolve().parents[3] / "module"
@@ -105,6 +106,16 @@ def _best_rule_reason(quote: dict) -> str | None:
     return quote.get("status")
 
 
+def _best_rule_unit(quote: dict) -> str | None:
+    """청구할인·포인트·캐시백 구분을 위한 최고 혜택 규칙의 보상 단위"""
+
+    best_rule_id = quote.get("best_rule_id")
+    for rule in quote.get("rules") or []:
+        if rule.get("rule_id") == best_rule_id:
+            return rule.get("reward_unit")
+    return None
+
+
 class RuleEngineAdapter:
     """backend/module/ P1 견적 함수를 기존 추천 API 응답 형태로 감싼다."""
 
@@ -174,29 +185,38 @@ class RuleEngineAdapter:
             product_name = product.product_name if product is not None else None
             card_type = product.card_type if product is not None else None
 
+            blocked = card_block_reason(user_card, product)
+
             if _is_dongbaek_product(product_id, card_type, user_card.db_wallet_id):
                 candidates.append(
-                    self._quote_dongbaek(
-                        user_card_id=user_card.user_card_id,
-                        product_id=product_id,
-                        product_name=product_name,
-                        merchant=merchant,
-                        amount_won=amount_won,
-                        inputs=dongbaek_inputs,
+                    self._finalize(
+                        self._quote_dongbaek(
+                            user_card_id=user_card.user_card_id,
+                            product_id=product_id,
+                            product_name=product_name,
+                            merchant=merchant,
+                            amount_won=amount_won,
+                            inputs=dongbaek_inputs,
+                        ),
+                        blocked,
                     )
                 )
                 continue
 
             if product_id not in SELECTED_PRODUCT_IDS:
                 candidates.append(
-                    {
-                        "user_card_id": user_card.user_card_id,
-                        "product_id": product_id,
-                        "product_name": product_name,
-                        "expected_benefit_won": 0,
-                        "eligible": False,
-                        "reason": "UNSUPPORTED_PRODUCT_ID",
-                    }
+                    self._finalize(
+                        {
+                            "user_card_id": user_card.user_card_id,
+                            "product_id": product_id,
+                            "product_name": product_name,
+                            "expected_benefit_won": 0,
+                            "eligible": False,
+                            "benefit_status": "UNRESOLVED",
+                            "reason": "UNSUPPORTED_PRODUCT_ID",
+                        },
+                        blocked,
+                    )
                 )
                 continue
 
@@ -217,14 +237,18 @@ class RuleEngineAdapter:
                 )
             except Exception as exc:
                 candidates.append(
-                    {
-                        "user_card_id": user_card.user_card_id,
-                        "product_id": product_id,
-                        "product_name": product_name,
-                        "expected_benefit_won": 0,
-                        "eligible": False,
-                        "reason": f"{type(exc).__name__}:{exc}",
-                    }
+                    self._finalize(
+                        {
+                            "user_card_id": user_card.user_card_id,
+                            "product_id": product_id,
+                            "product_name": product_name,
+                            "expected_benefit_won": 0,
+                            "eligible": False,
+                            "benefit_status": "ERROR",
+                            "reason": f"{type(exc).__name__}:{exc}",
+                        },
+                        blocked,
+                    )
                 )
                 continue
 
@@ -233,18 +257,29 @@ class RuleEngineAdapter:
             eligible = status == "SIMULATED_COMPARABLE"
 
             candidates.append(
-                {
-                    "user_card_id": user_card.user_card_id,
-                    "product_id": product_id,
-                    "product_name": product_name,
-                    "expected_benefit_won": max(benefit, 0),
-                    "eligible": eligible,
-                    "reason": _best_rule_reason(quote),
-                }
+                self._finalize(
+                    {
+                        "user_card_id": user_card.user_card_id,
+                        "product_id": product_id,
+                        "product_name": product_name,
+                        "expected_benefit_won": max(benefit, 0),
+                        "eligible": eligible,
+                        "benefit_status": (
+                            "CALCULATED" if eligible else "UNRESOLVED"
+                        ),
+                        "benefit_unit": _best_rule_unit(quote),
+                        "reason": _best_rule_reason(quote),
+                    },
+                    blocked,
+                )
             )
 
         recommended = None
-        comparable = [item for item in candidates if item["eligible"]]
+        comparable = [
+            item
+            for item in candidates
+            if item["eligible"] and item["payable"]
+        ]
         if comparable:
             recommended = min(
                 comparable,
@@ -266,6 +301,17 @@ class RuleEngineAdapter:
             ),
             "candidates": candidates,
         }
+
+    @staticmethod
+    def _finalize(candidate: dict, blocked: str | None) -> dict:
+        """결제 가능 여부(payable)를 혜택 산정 결과와 분리해 기록"""
+
+        candidate.setdefault("payable", True)
+        candidate.setdefault("payable_reason", None)
+        if blocked is not None:
+            candidate["payable"] = False
+            candidate["payable_reason"] = blocked
+        return candidate
 
     def _build_dongbaek_inputs(self, db: Session, user_id: str, merchant) -> DongbaekInputs:
         user_repo = UserRepository(db)
@@ -320,11 +366,33 @@ class RuleEngineAdapter:
             result.get("status") == "COMPARABLE"
             and result.get("payment_possible") is True
         )
+        balance = inputs.balance_won
+        if balance is None:
+            payable_reason = "WALLET_NOT_FOUND"
+        elif merchant.dongbaek_status == "NOT_REGISTERED":
+            payable_reason = "MERCHANT_NOT_REGISTERED"
+        elif balance < amount_won:
+            payable_reason = "INSUFFICIENT_BALANCE"
+        else:
+            payable_reason = None
+
+        status = result.get("status")
+        benefit_status = (
+            "CALCULATED"
+            if eligible
+            else "NOT_APPLICABLE"
+            if status == "INELIGIBLE"
+            else "UNRESOLVED"
+        )
         return {
             "user_card_id": user_card_id,
             "product_id": product_id,
             "product_name": product_name,
             "expected_benefit_won": max(benefit, 0) if eligible else 0,
             "eligible": eligible,
+            "benefit_status": benefit_status,
+            "benefit_unit": "CASHBACK",
+            "payable": payable_reason is None,
+            "payable_reason": payable_reason,
             "reason": result.get("reason"),
         }
