@@ -5,7 +5,7 @@ from app.api.auth_dependencies import require_path_user
 from app.api.dependencies import get_db
 from app.repositories.card_repository import CardRepository
 from app.schemas.card_schema import CardProductResponse
-from app.services.card_service import CardService
+from app.services.card_service import CardService, DuplicateCardError, InvalidCardDetailError
 from app.schemas.card_schema import UserCardResponse
 from app.repositories.user_repository import UserRepository
 from app.schemas.card_schema import UserCardCreateRequest
@@ -208,7 +208,16 @@ def create_user_card(
         return service.create_user_card(
             user_id=user_id,
             product_id=request.product_id,
+            card_number=request.card_number,
+            card_cvc=request.card_cvc,
+            expiry_month=request.expiry_month,
+            expiry_year=request.expiry_year,
+            prev_month_spend_won=request.prev_month_spend_won,
         )
+    except DuplicateCardError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidCardDetailError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=404,

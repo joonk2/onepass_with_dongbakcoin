@@ -41,14 +41,36 @@ class UserCardResponse(BaseModel):
     registered_ref: str | None = None
     active_from: date | None = None
     active_to: date | None = None
+    card_last4: str | None = None
+    prev_month_spend_won: int | None = None
 
 
 
 # --------- 사용자 카드 등록 요청 ------------
 class UserCardCreateRequest(BaseModel):
-    """사용자 보유 카드 등록 요청"""
+    """사용자 보유 카드 등록 요청. 상세 입력값은 모두 선택이다."""
 
     product_id: str
+    card_number: str | None = None
+    card_cvc: str | None = None
+    expiry_month: int | None = Field(default=None, ge=1, le=12)
+    expiry_year: int | None = Field(default=None, ge=2000, le=2100)
+    prev_month_spend_won: int | None = Field(default=None, ge=0, le=100_000_000)
+
+    @model_validator(mode="after")
+    def validate_card_details(self):
+        if self.card_number is not None:
+            digits = "".join(ch for ch in self.card_number if ch not in " -")
+            if not digits.isdigit() or not 15 <= len(digits) <= 16:
+                raise ValueError("카드번호는 15~16자리 숫자여야 합니다.")
+            self.card_number = digits
+        if self.card_cvc is not None and not (
+            self.card_cvc.isdigit() and len(self.card_cvc) in (3, 4)
+        ):
+            raise ValueError("CVC는 3~4자리 숫자여야 합니다.")
+        if (self.expiry_month is None) != (self.expiry_year is None):
+            raise ValueError("유효기간은 월과 연도를 함께 입력해야 합니다.")
+        return self
 
 
 

@@ -2,7 +2,19 @@ from app.db_entities.card_entity import CardProduct
 from app.repositories.card_repository import CardRepository
 from app.db_entities.card_entity import UserCard
 from app.repositories.user_repository import UserRepository
+from app.services.card_registration_policy import is_registrable_product
+import calendar
+from datetime import date
 from uuid import uuid4
+
+
+class InvalidCardDetailError(ValueError):
+    """카드 상세 입력값이 올바르지 않을 때 발생"""
+
+
+class DuplicateCardError(ValueError):
+    """이미 활성 상태로 등록된 카드를 다시 등록할 때 발생"""
+
 
 
 
@@ -62,6 +74,11 @@ class CardService:
         self,
         user_id: str,
         product_id: str,
+        card_number: str | None = None,
+        card_cvc: str | None = None,
+        expiry_month: int | None = None,
+        expiry_year: int | None = None,
+        prev_month_spend_won: int | None = None,
     ) -> UserCard:
         """사용자 존재 여부와 카드 상품을 확인한 후 등록"""
 
@@ -80,12 +97,31 @@ class CardService:
         if product is None:
             raise ValueError("카드 상품을 찾을 수 없습니다.")
 
+        if not is_registrable_product(product_id, product.card_type):
+            raise InvalidCardDetailError("등록할 수 없는 카드 상품입니다.")
+
+        if any(
+            card.product_id == product_id
+            for card in self.repository.get_user_cards(user_id)
+        ):
+            raise DuplicateCardError("이미 등록된 카드입니다.")
+
+        expires_at = None
+        if expiry_month is not None and expiry_year is not None:
+            last_day = calendar.monthrange(expiry_year, expiry_month)[1]
+            expires_at = date(expiry_year, expiry_month, last_day)
+            if expires_at < date.today():
+                raise InvalidCardDetailError("유효기간이 지난 카드는 등록할 수 없습니다.")
+
         user_card = UserCard(
             user_card_id=str(uuid4()),
             user_id=user_id,
             product_id=product_id,
             card_status="ACTIVE",
+            expires_at=expires_at,
         )
+        # 카드번호·CVC·전월실적은 요청 검증만 하고, 운영 DB에 해당 열이 생기기 전에는 저장하지 않는다.
+        del card_number, card_cvc, prev_month_spend_won
 
         return self.repository.create_user_card(user_card)
 

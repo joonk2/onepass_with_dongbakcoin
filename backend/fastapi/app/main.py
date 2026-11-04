@@ -1,17 +1,10 @@
-import os
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1.api_router import api_router
 
-cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "FRONTEND_URL",
-        "https://onepass-with-dongbakcoin-beta.vercel.app,http://localhost:3000",
-    ).split(",")
-    if origin.strip()
-]
+from app.api.v1.api_router import api_router
+from app.core.cors import frontend_origins
+
+cors_origins = frontend_origins()
 
 app = FastAPI(
     title="Dongbaek Linked Pass API",
@@ -24,6 +17,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
 )
 
 app.include_router(api_router, prefix="/api/v1")

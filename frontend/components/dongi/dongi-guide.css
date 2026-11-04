@@ -1,0 +1,145 @@
+.dongi-guide {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  width: min(440px, calc(100vw - 24px));
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #ececec;
+  z-index: 40;
+  animation: dongi-rise 0.4s ease-out;
+}
+
+.dongi-guide-stage {
+  position: relative;
+  flex: 0 0 84px;
+  height: 104px;
+}
+
+.dongi-body {
+  display: block;
+  width: 84px;
+  height: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform-origin: 50% 100%;
+}
+
+.dongi-body:focus-visible {
+  outline: 2px solid #171717;
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.dongi-figure {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.dongi-question {
+  position: absolute;
+  top: -8px;
+  right: -2px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #d0122d;
+  color: #fff;
+  font-weight: 800;
+  line-height: 28px;
+  text-align: center;
+  animation: dongi-pop 0.35s ease-out;
+}
+
+.dongi-guide-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.dongi-bubble {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f7f8;
+  color: #202124;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.dongi-bubble.pending {
+  color: #9aa0a6;
+}
+
+.dongi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dongi-primary,
+.dongi-secondary {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dongi-primary {
+  border: 0;
+  background: #171717;
+  color: #fff;
+}
+
+.dongi-primary:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dongi-secondary {
+  border: 1px solid #ececec;
+  background: #fff;
+  color: #202124;
+}
+
+.dongi-primary:focus-visible,
+.dongi-secondary:focus-visible {
+  outline: 2px solid #171717;
+  outline-offset: 2px;
+}
+
+[data-state='WALK'] .dongi-body { animation: dongi-walk 0.6s ease-in-out infinite; }
+[data-state='SURPRISED'] .dongi-body { animation: dongi-jump 0.4s ease-out; }
+[data-state='CONFUSED'] .dongi-body { animation: dongi-tilt 1.4s ease-in-out infinite; }
+[data-state='HAPPY'] .dongi-body { animation: dongi-hop 0.7s ease-in-out infinite; }
+[data-state='TALK'] .dongi-body { animation: dongi-breathe 2.4s ease-in-out infinite; }
+.dongi-body.waving { animation: dongi-wave 0.5s ease-in-out infinite alternate !important; }
+
+@keyframes dongi-rise { from { opacity: 0; transform: translate(-50%, 16px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes dongi-pop { from { transform: scale(0); } to { transform: scale(1); } }
+@keyframes dongi-walk { 0%, 100% { transform: translateX(-3px) rotate(-2deg); } 50% { transform: translateX(3px) rotate(2deg); } }
+@keyframes dongi-jump { 0% { transform: translateY(0); } 40% { transform: translateY(-14px) scale(1.04); } 100% { transform: translateY(0); } }
+@keyframes dongi-tilt { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+@keyframes dongi-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
+@keyframes dongi-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+@keyframes dongi-wave { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dongi-guide,
+  .dongi-question,
+  .dongi-body,
+  .dongi-body.waving {
+    animation: none !important;
+  }
+}

@@ -1,13 +1,7 @@
 import Image from 'next/image'
+import { ONEPASS_CARD_IMAGES, type DongiImageVariant } from '@/lib/dongi/card-design'
 
-const dongiImages = {
-  big: { src: '/big-dongi.png', width: 1582, height: 994 },
-  classic: { src: '/dongi-classic.png', width: 994, height: 1582 },
-  daray: { src: '/dongi-daray.png', width: 1582, height: 994 },
-  rope: { src: '/dongi-rope.png', width: 995, height: 1581 },
-} as const
-
-export type DongiImageVariant = keyof typeof dongiImages
+export type { DongiImageVariant }
 
 export default function DongiImage({
   variant,
@@ -20,7 +14,7 @@ export default function DongiImage({
   className?: string
   priority?: boolean
 }) {
-  const image = dongiImages[variant]
+  const image = ONEPASS_CARD_IMAGES[variant]
   return (
     <Image
       src={image.src}

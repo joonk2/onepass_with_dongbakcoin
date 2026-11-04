@@ -25,6 +25,16 @@ import {
 } from 'lucide-react'
 import ApiToolsPanel from '@/components/api-tools-panel'
 import DongiImage from '@/components/dongi-image'
+import DongiGuide from '@/components/dongi/dongi-guide'
+import CardIssueSheet from '@/components/dongi/card-issue-sheet'
+import UnlinkConfirm from '@/components/unlink-confirm'
+import CardRegistrationPicker from '@/components/card-registration-picker'
+import { useToast } from '@/components/toast-provider'
+import { NOTICE, cardActionToastTone, failureMessage } from '@/lib/notices'
+import { DEFAULT_CARD_DESIGN, ONEPASS_CARD_IMAGES, needsOnepassFirst, readCardDesign, writeCardDesign } from '@/lib/dongi/card-design'
+import type { DongiImageVariant } from '@/components/dongi-image'
+import { cardKindLabel, registrationStatusLabel, resolveRegisteredCardFace, type CardFace } from '@/lib/card-face'
+import { dismissKey, resolveOnboardingStatus } from '@/lib/dongi/onboarding'
 import WelcomeScreen from '@/components/welcome-screen'
 import {
   api,
@@ -34,6 +44,7 @@ import {
   type AuthSession,
   type BenefitRule,
   type CardProduct,
+  type CardRegistrationDetails,
   type Merchant,
   type PaymentRecord,
   type PaymentRecommendation,
@@ -44,6 +55,7 @@ import {
   type WalletBalance,
 } from '@/lib/api'
 import { merchantIdFromSearch, resolveQrMerchant } from '@/lib/qr-payment'
+import { CARD_KIND_LABEL, cardKindOf, issuerLabel, registrableProducts } from '@/lib/card-catalog'
 
 type Screen = 'home' | 'card' | 'manage' | 'platform' | 'recharge' | 'report' | 'qr-scan' | 'qr-pay' | 'api-tools'
 type EntryScreen = 'welcome' | 'auth' | 'qr'
@@ -98,6 +110,77 @@ const quickLinks = [
 ]
 
 const formatWon = (amount: number) => `${amount.toLocaleString('ko-KR')}원`
+
+const cardLabel = (name: string): string => (name.includes('동백전') ? '원패스 카드' : name)
+
+const cardMeta = (product: CardProduct | undefined): string => {
+  if (!product) return '카드 상품 정보 없음'
+  const kind = cardKindOf(product)
+  return [issuerLabel(product.issuer), kind ? CARD_KIND_LABEL[kind] : null].filter(Boolean).join(' · ')
+}
+
+function benefitNameOf(rules: BenefitRule[] | undefined): string | null {
+  const rule = rules?.[0]
+  return rule?.benefit_name ?? rule?.benefit_type ?? null
+}
+
+function isOnepassUserCard(card: UserCard, product: CardProduct | undefined): boolean {
+  if (product) return isDongbaekProduct(product)
+  return card.product_id === 'PRD_DB_SYN'
+}
+
+function toCardSlide(options: {
+  card: UserCard
+  product: CardProduct | undefined
+  designId: DongiImageVariant
+  balanceWon: number | null
+  rules: BenefitRule[]
+}): CardSlide {
+  const onepass = isOnepassUserCard(options.card, options.product)
+  const benefitName = benefitNameOf(options.rules)
+  return {
+    key: options.card.user_card_id,
+    title: cardLabel(options.product?.product_name ?? options.card.product_id),
+    issuer: onepass ? '부산시민플랫폼' : cardMeta(options.product),
+    kindLabel: cardKindLabel({ onepass, cardType: options.product?.card_type ?? null }),
+    statusLabel: registrationStatusLabel(options.card.card_status),
+    detail: onepass
+      ? (options.balanceWon != null ? `잔액 ${formatWon(options.balanceWon)}` : '잔액 확인 불가')
+      : (benefitName ? `혜택 ${benefitName}` : null),
+    face: resolveRegisteredCardFace({
+      productId: options.card.product_id,
+      onepass,
+      onepassDesignId: onepass ? options.designId : null,
+    }),
+    isDongi: onepass,
+    card: options.card,
+    product: options.product,
+    rules: options.rules,
+  }
+}
+
+function slidesForCards(options: {
+  cards: UserCard[]
+  products: CardProduct[]
+  designId: DongiImageVariant
+  balanceWon: number | null
+  benefits: Record<string, BenefitRule[]>
+}): CardSlide[] {
+  const entries = options.cards.map((card) => ({
+    card,
+    product: options.products.find((item) => item.product_id === card.product_id),
+  }))
+  return [
+    ...entries.filter(({ card, product }) => isOnepassUserCard(card, product)),
+    ...entries.filter(({ card, product }) => !isOnepassUserCard(card, product)),
+  ].map(({ card, product }) => toCardSlide({
+    card,
+    product,
+    designId: options.designId,
+    balanceWon: options.balanceWon,
+    rules: options.benefits[card.product_id] ?? [],
+  }))
+}
 
 function isDongbaekProduct(product: CardProduct): boolean {
   const productDetails = [
@@ -173,12 +256,36 @@ export default function OnePassDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [pendingCard, setPendingCard] = useState('')
-  const [cardActionMessage, setCardActionMessage] = useState('')
+  const { showToast } = useToast()
   const cardActionsInFlight = useRef(new Set<string>())
   const [qrMerchantId, setQrMerchantId] = useState('')
   const [qrScanError, setQrScanError] = useState('')
   const [lastPayment, setLastPayment] = useState<PaymentSummary | null>(null)
+  const [cardsLoaded, setCardsLoaded] = useState(false)
+  const [cardsLoadFailed, setCardsLoadFailed] = useState(false)
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false)
+  const [cardRegisteredNotice, setCardRegisteredNotice] = useState(false)
+  const [issueSheetOpen, setIssueSheetOpen] = useState(false)
+  const [issueBusy, setIssueBusy] = useState(false)
+  const [issueError, setIssueError] = useState('')
+  const [unlinkTarget, setUnlinkTarget] = useState<CardProduct | null>(null)
+  const [cardDesign, setCardDesign] = useState<DongiImageVariant>(DEFAULT_CARD_DESIGN)
   const userId = authSession?.user.user_id
+
+  useEffect(() => {
+    setCardDesign(userId ? readCardDesign(userId) : DEFAULT_CARD_DESIGN)
+    setIssueSheetOpen(false)
+    setIssueError('')
+  }, [userId])
+
+  useEffect(() => {
+    setCardsLoaded(false)
+    setCardsLoadFailed(false)
+    setCardRegisteredNotice(false)
+    setOnboardingDismissed(
+      userId ? window.sessionStorage.getItem(dismissKey(userId)) === '1' : false,
+    )
+  }, [userId])
 
   useEffect(() => {
     setAuthSession(readAuthSession())
@@ -223,6 +330,8 @@ export default function OnePassDashboard() {
       if (signal?.aborted) return
       setProducts(loadedProducts)
       setUserCards(loadedCards)
+      setCardsLoaded(true)
+      setCardsLoadFailed(false)
       setMerchants(loadedMerchants)
       setPayments(history.payments)
       if (loadedIdentityCards.status === 'fulfilled') {
@@ -271,13 +380,15 @@ export default function OnePassDashboard() {
       setError('')
     } catch (cause) {
       if (signal?.aborted) return
+      setCardsLoadFailed(true)
       setError(
         cause instanceof Error ? cause.message : '서비스 정보를 불러오지 못했습니다.',
       )
+      showToast({ tone: 'error', message: NOTICE.cardsLoadFailed })
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [userId])
+  }, [showToast, userId])
 
   useEffect(() => {
     if (!authReady) return
@@ -316,9 +427,35 @@ export default function OnePassDashboard() {
   }, [products])
 
   const activeCards = userCards.filter((card) => card.card_status === 'ACTIVE')
+  const isWalletCard = (card: UserCard) => {
+    const product = products.find((item) => item.product_id === card.product_id)
+    return product ? isDongbaekProduct(product) : card.product_id === 'PRD_DB_SYN'
+  }
+  const bankCardCount = activeCards.filter((card) => !isWalletCard(card)).length
+  const onboardingStatus = resolveOnboardingStatus({
+    authenticated: Boolean(authSession),
+    cardsLoaded,
+    cardsError: cardsLoadFailed,
+    activeCardCount: bankCardCount,
+    dismissed: onboardingDismissed,
+    qrPaymentFlow: screen === 'qr-pay' || screen === 'qr-scan',
+  })
+
+  useEffect(() => {
+    // 카드가 다시 생기면 안내 이력을 지워, 나중에 0장이 되면 다시 안내할 수 있게 한다.
+    if (!userId || !cardsLoaded || bankCardCount === 0) return
+    window.sessionStorage.removeItem(dismissKey(userId))
+    setOnboardingDismissed(false)
+  }, [userId, cardsLoaded, bankCardCount])
+
+  const dismissOnboarding = () => {
+    if (userId) window.sessionStorage.setItem(dismissKey(userId), '1')
+    setOnboardingDismissed(true)
+  }
   const dongbaekProduct = activeCards
     .map((card) => products.find((product) => product.product_id === card.product_id))
     .find((product): product is CardProduct => product !== undefined && isDongbaekProduct(product)) ?? null
+  const onepassProduct = products.find(isDongbaekProduct) ?? null
   const approvedPayments = useMemo(
     () =>
       payments
@@ -327,41 +464,79 @@ export default function OnePassDashboard() {
     [payments],
   )
 
-  const handleCardToggle = async (product: CardProduct) => {
+  const handleIssueOnepass = async (variant: DongiImageVariant) => {
+    if (!userId || issueBusy) return
+    setIssueBusy(true)
+    setIssueError('')
+    try {
+      let target = onepassProduct
+      if (!target) {
+        const freshProducts = await api.getProducts()
+        setProducts(freshProducts)
+        target = freshProducts.find(isDongbaekProduct) ?? null
+      }
+      if (!target) {
+        setIssueError('발급 가능한 원패스(동백전) 카드 상품이 없습니다. 관리자에게 문의해 주세요.')
+        return
+      }
+      await api.addUserCard(userId, target.product_id)
+      writeCardDesign(userId, variant)
+      setCardDesign(variant)
+      const refreshedCards = await api.getUserCards(userId)
+      setUserCards(refreshedCards)
+      setIssueSheetOpen(false)
+      setCardRegisteredNotice(true)
+      setScreen('manage')
+      showToast({ tone: 'success', message: NOTICE.cardRegistered })
+    } catch (issueFailure) {
+      setIssueError(issueFailure instanceof Error ? issueFailure.message : '카드 발급에 실패했습니다.')
+    } finally {
+      setIssueBusy(false)
+    }
+  }
+
+  const handleCardToggle = async (product: CardProduct, details?: CardRegistrationDetails, confirmed = false) => {
     if (!userId) return
     if (cardActionsInFlight.current.size > 0) return
     const linked = activeCards.find((card) => card.product_id === product.product_id)
-    if (linked && !window.confirm(
-      `${product.product_name} 카드를 OnePass 등록 목록에서 해제할까요?\n실제 금융카드 계약은 해지되지 않습니다.`,
-    )) return
+    if (!linked && needsOnepassFirst({
+      hasOnepassCard: dongbaekProduct !== null,
+      targetIsOnepassCard: isDongbaekProduct(product),
+    })) {
+      setIssueError('')
+      setIssueSheetOpen(true)
+      return
+    }
+    if (linked && !confirmed) {
+      setUnlinkTarget(product)
+      return
+    }
     cardActionsInFlight.current.add(product.product_id)
     setPendingCard(product.product_id)
-    setCardActionMessage('')
-    setError('')
     let actionCompleted = false
     try {
       if (linked) {
         await api.removeUserCard(userId, linked.user_card_id)
       } else {
-        await api.addUserCard(userId, product.product_id)
+        await api.addUserCard(userId, product.product_id, details)
       }
       actionCompleted = true
       const refreshedCards = await api.getUserCards(userId)
       setUserCards(refreshedCards)
-      setCardActionMessage(
-        linked
-          ? `${product.product_name} 카드 등록을 해제했습니다.`
-          : `${product.product_name} 카드를 등록했습니다.`,
-      )
+      if (!linked && bankCardCount === 0 && !isDongbaekProduct(product)) setCardRegisteredNotice(true)
+      showToast({
+        tone: 'success',
+        message: linked ? NOTICE.cardUnlinked : NOTICE.cardRegistered,
+      })
     } catch (cause) {
-      setError(
-        actionCompleted
-          ? '카드 상태는 변경됐지만 목록을 갱신하지 못했습니다. 다시 시도해 주세요.'
-          : cause instanceof Error ? cause.message : '카드 등록 상태를 변경하지 못했습니다.',
-      )
+      const message = actionCompleted
+        ? '카드 상태는 변경됐지만 목록을 갱신하지 못했습니다. 다시 시도해 주세요.'
+        : failureMessage(cause, linked ? NOTICE.cardUnlinkFailed : NOTICE.cardRegisterFailed)
+      showToast({ tone: cardActionToastTone(message), message })
     } finally {
       cardActionsInFlight.current.delete(product.product_id)
       setPendingCard('')
+      if (linked) setUnlinkTarget(null)
     }
   }
 
@@ -434,6 +609,9 @@ export default function OnePassDashboard() {
   }
 
   const handleAuthenticated = (session: AuthSession) => {
+    window.sessionStorage.removeItem(dismissKey(session.user.user_id))
+    setOnboardingDismissed(false)
+    setCardRegisteredNotice(false)
     writeAuthSession(session)
     setAuthSession(session)
     setAuthMessage('')
@@ -499,6 +677,46 @@ export default function OnePassDashboard() {
 
   return (
     <main className={`app-shell ${screen === 'report' ? 'report-active' : ''}`}>
+      {issueSheetOpen && (
+        <CardIssueSheet
+          busy={issueBusy}
+          error={issueError}
+          onIssue={handleIssueOnepass}
+          onCancel={() => setIssueSheetOpen(false)}
+        />
+      )}
+      {unlinkTarget && (
+        <UnlinkConfirm
+          cardName={cardLabel(unlinkTarget.product_name)}
+          onepass={isDongbaekProduct(unlinkTarget)}
+          busy={pendingCard === unlinkTarget.product_id}
+          onCancel={() => {
+            if (pendingCard === unlinkTarget.product_id) return
+            setUnlinkTarget(null)
+          }}
+          onConfirm={() => {
+            if (pendingCard === unlinkTarget.product_id) return
+            void handleCardToggle(unlinkTarget, undefined, true)
+          }}
+        />
+      )}
+      {onboardingStatus === 'onboarding' && (
+        <DongiGuide
+          scenario="no-cards"
+          onPrimary={() => {
+            if (dongbaekProduct) { dismissOnboarding(); setScreen('manage'); return }
+            setIssueError('')
+            setIssueSheetOpen(true)
+          }}
+          onSecondary={dismissOnboarding}
+        />
+      )}
+      {cardRegisteredNotice && bankCardCount > 0 && (
+        <DongiGuide
+          scenario="card-registered"
+          onClose={() => setCardRegisteredNotice(false)}
+        />
+      )}
       <header className="app-header">
         <div className="brand">
           <div className="brand-mark"><DongbaekMark small /></div>
@@ -535,8 +753,9 @@ export default function OnePassDashboard() {
                 wallet={wallet}
                 walletError={walletError}
                 payments={approvedPayments}
-                dongbaekProduct={dongbaekProduct}
+                cardDesign={cardDesign}
                 products={products}
+                benefits={benefits}
                 userCards={activeCards}
                 lastPayment={lastPayment}
                 onDismissLastPayment={() => setLastPayment(null)}
@@ -556,7 +775,6 @@ export default function OnePassDashboard() {
                 initialMerchantId={qrMerchantId}
                 onBack={() => setScreen('home')}
                 onPaymentComplete={loadData}
-                onError={setError}
               />
             )}
             {screen === 'manage' && (
@@ -565,12 +783,12 @@ export default function OnePassDashboard() {
                 userCards={activeCards}
                 payments={approvedPayments}
                 benefits={benefits}
-                displayName={profile?.display_name ?? null}
                 wallet={wallet}
                 pendingCard={pendingCard}
-                actionMessage={cardActionMessage}
+                cardDesign={cardDesign}
                 onBack={() => setScreen('home')}
                 onToggle={handleCardToggle}
+                onRetry={() => void loadData()}
               />
             )}
             {screen === 'platform' && (
@@ -580,6 +798,9 @@ export default function OnePassDashboard() {
                 profileError={profileError}
                 identityCards={identityCards}
                 identityCardError={identityCardError}
+                hasOnepassCard={dongbaekProduct !== null}
+                cardDesign={cardDesign}
+                onIssueOnepass={() => { setIssueError(''); setIssueSheetOpen(true) }}
                 onSave={handleProfileUpdate}
                 onBack={() => setScreen('home')}
               />
@@ -842,8 +1063,9 @@ function HomeScreen({
   wallet,
   walletError,
   payments,
-  dongbaekProduct,
+  cardDesign,
   products,
+  benefits,
   userCards,
   lastPayment,
   onDismissLastPayment,
@@ -857,8 +1079,9 @@ function HomeScreen({
   wallet: WalletBalance | null
   walletError: string
   payments: PaymentRecord[]
-  dongbaekProduct: CardProduct | null
+  cardDesign: DongiImageVariant
   products: CardProduct[]
+  benefits: Record<string, BenefitRule[]>
   userCards: UserCard[]
   lastPayment: PaymentSummary | null
   onDismissLastPayment: () => void
@@ -870,35 +1093,13 @@ function HomeScreen({
 }) {
   const total = payments.reduce((sum, payment) => sum + payment.amount_won, 0)
   const [activeSlide, setActiveSlide] = useState(0)
-  const dongiCard = userCards.find((card) => {
-    const product = products.find((item) => item.product_id === card.product_id)
-    return product ? isDongbaekProduct(product) : false
+  const homeSlides = slidesForCards({
+    cards: userCards,
+    products,
+    designId: cardDesign,
+    balanceWon: wallet?.balance_won ?? null,
+    benefits,
   })
-  const homeSlides: CardSlide[] = [
-    {
-      key: 'dongi',
-      title: dongbaekProduct?.product_name ?? 'ONEPASS 카드',
-      issuer: dongbaekProduct?.issuer ?? '부산시민플랫폼',
-      holder: userName,
-      isDongi: true,
-      balanceWon: wallet?.balance_won ?? null,
-      rules: [],
-    },
-    ...userCards
-      .filter((card) => card.user_card_id !== dongiCard?.user_card_id)
-      .map((card, index): CardSlide => {
-        const product = products.find((item) => item.product_id === card.product_id)
-        return {
-          key: card.user_card_id,
-          title: product?.product_name ?? card.product_id,
-          issuer: product?.issuer ?? '카드 상품 정보 없음',
-          holder: userName,
-          isDongi: false,
-          tone: index % 4,
-          rules: [],
-        }
-      }),
-  ]
   return (
     <div className="screen-content">
       <div className="user-row">
@@ -906,6 +1107,9 @@ function HomeScreen({
         <strong>{userName ?? '프로필 정보 미등록'}</strong>
         <div className="user-actions"><Bell size={18} /><button onClick={onOpenMenu} aria-label="메뉴"><Menu size={20} /></button></div>
       </div>
+      {homeSlides.length === 0 && (
+        <p className="home-balance-summary" style={{ textAlign: 'center' }}>등록된 카드가 없습니다. 카드 관리에서 카드를 등록해 주세요.</p>
+      )}
       <CardCarousel
         slides={homeSlides}
         activeIndex={activeSlide}
@@ -965,7 +1169,7 @@ function HomeScreen({
           <div className="recent-payment" key={item.tx_id}>
             <div>
               <b>{item.merchant_name ?? '가맹점'}</b>
-              <small>{item.product_name ?? '카드'} · {new Date(item.event_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>
+              <small>{cardLabel(item.product_name ?? '카드')} · {new Date(item.event_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>
               {(item.awarded_benefit_won ?? 0) > 0 && (
                 <small className="recent-cashback">받은 캐시백 +{formatWon(item.awarded_benefit_won ?? 0)}</small>
               )}
@@ -994,7 +1198,6 @@ function CardDetail({
   initialMerchantId,
   onBack,
   onPaymentComplete,
-  onError,
 }: {
   userId: string
   merchants: Merchant[]
@@ -1003,7 +1206,6 @@ function CardDetail({
   initialMerchantId: string
   onBack: () => void
   onPaymentComplete: () => Promise<void>
-  onError: (message: string) => void
 }) {
   const [merchantId, setMerchantId] = useState(initialMerchantId)
   const [amount, setAmount] = useState('')
@@ -1013,6 +1215,7 @@ function CardDetail({
   const [paying, setPaying] = useState(false)
   const [success, setSuccess] = useState('')
   const [showBenefitComparison, setShowBenefitComparison] = useState(false)
+  const { showToast } = useToast()
   const thisMonthBenefit = payments
     .filter((payment) => payment.event_at.slice(0, 7) === new Date().toISOString().slice(0, 7))
     .reduce((sum, payment) => sum + (payment.awarded_benefit_won ?? 0), 0)
@@ -1067,12 +1270,13 @@ function CardDetail({
         amount_won: Number(amount),
       })
       const balanceNote = result.balance_after_won != null && result.balance_before_won != null
-        ? ` 동백전 잔액 ${formatWon(result.balance_before_won)} → ${formatWon(result.balance_after_won)}.`
+        ? `동백전 잔액 ${formatWon(result.balance_before_won)} → ${formatWon(result.balance_after_won)}.`
         : ''
-      setSuccess(`결제가 완료되었습니다.${balanceNote} 금융기관 승인이 아닌 서비스 내 결제입니다. 거래 ID: ${result.tx_id}`)
+      setSuccess([balanceNote, `거래 ID: ${result.tx_id}`, '금융기관 승인이 아닌 서비스 내 결제입니다.'].filter(Boolean).join(' '))
+      showToast({ tone: 'success', message: NOTICE.paymentDone })
       await onPaymentComplete()
     } catch (cause) {
-      onError(cause instanceof Error ? cause.message : '결제를 완료하지 못했습니다.')
+      showToast({ tone: 'error', message: failureMessage(cause, NOTICE.paymentFailed) })
     } finally {
       setPaying(false)
     }
@@ -1099,7 +1303,7 @@ function CardDetail({
             <>
               <span>{merchants.find((merchant) => merchant.merchant_id === merchantId)?.merchant_name} · {formatWon(recommendation.amount_won)}</span>
               <strong>예상 혜택 {formatWon(recommendation.expected_benefit_won)}</strong>
-              <p>{recommendation.candidates.find((candidate) => candidate.user_card_id === recommendation.recommended_user_card_id)?.product_name ?? '추천 카드 없음'}</p>
+              <p>{cardLabel(recommendation.candidates.find((candidate) => candidate.user_card_id === recommendation.recommended_user_card_id)?.product_name ?? '추천 카드 없음')}</p>
               <small>{recommendation.candidates.length ? '예상 혜택이 가장 높은 카드입니다.' : '등록된 보유 카드가 없어 비교할 수 없습니다.'}</small>
             </>
           ) : (
@@ -1124,7 +1328,7 @@ function CardDetail({
                     key={candidate.user_card_id}
                   >
                     <span>
-                      <b>{candidate.product_name ?? '카드 상품'}</b>
+                      <b>{cardLabel(candidate.product_name ?? '카드 상품')}</b>
                       <small>{candidate.reason ?? (candidate.eligible ? '혜택 적용 가능' : '혜택 적용 대상 아님')}</small>
                     </span>
                     <strong>{formatWon(candidate.expected_benefit_won)}</strong>
@@ -1155,13 +1359,55 @@ type CardSlide = {
   key: string
   title: string
   issuer: string
-  holder: string | null
+  kindLabel: string
+  statusLabel: string
+  detail: string | null
+  face: CardFace
   isDongi: boolean
-  balanceWon?: number | null
-  tone?: number
   card?: UserCard
   product?: CardProduct
   rules: BenefitRule[]
+}
+
+function CardFaceView({ face, title }: { face: CardFace; title: string }) {
+  const imagePath = face.kind === 'image' ? face.imagePath : ''
+  const [brokenPath, setBrokenPath] = useState('')
+  const broken = imagePath !== '' && brokenPath === imagePath
+  if (face.kind === 'missing' || broken) {
+    return (
+      <p className="carousel-art-missing" role="alert">
+        {face.kind === 'missing' ? face.message : `${title} 이미지를 불러오지 못했습니다.`}
+      </p>
+    )
+  }
+  if (face.kind === 'image') {
+    return (
+      <img
+        className="carousel-art-image"
+        src={face.imagePath}
+        alt={`${title} 디자인`}
+        width={face.width}
+        height={face.height}
+        draggable={false}
+        onError={() => setBrokenPath(face.imagePath)}
+      />
+    )
+  }
+  return (
+    <div
+      className="card-picker-card-art carousel-plate"
+      data-plate={face.designId}
+      style={{ background: face.background, color: face.color }}
+      role="img"
+      aria-label={`${title} 디자인`}
+    />
+  )
+}
+
+function slideOffset(track: HTMLElement, slide: HTMLElement): number {
+  const trackBox = track.getBoundingClientRect()
+  const slideBox = slide.getBoundingClientRect()
+  return slideBox.left - trackBox.left + track.scrollLeft
 }
 
 function CardCarousel({
@@ -1176,99 +1422,117 @@ function CardCarousel({
   onOpen?: () => void
 }) {
   const trackRef = useRef<HTMLDivElement>(null)
-  const [paused, setPaused] = useState(false)
-  const scrollToSlide = (index: number) => {
+  const scrollLock = useRef<number | null>(null)
+  const count = slides.length
+  const safeIndex = count === 0 ? 0 : ((activeIndex % count) + count) % count
+  const scrollToSlide = (index: number, instant = false) => {
     const track = trackRef.current
     const slide = track?.children[index] as HTMLElement | undefined
     if (!track || !slide) return
-    const left = slide.offsetLeft - (track.clientWidth - slide.clientWidth) / 2
-    track.scrollTo({ left, behavior: 'smooth' })
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const behavior: ScrollBehavior = instant || reduceMotion ? 'auto' : 'smooth'
+    if (instant) scrollLock.current = index
+    track.scrollTo({ left: slideOffset(track, slide), behavior })
   }
   const goTo = (index: number) => {
-    scrollToSlide(index)
-    onChange(index)
+    if (count === 0) return
+    const next = ((index % count) + count) % count
+    scrollToSlide(next)
+    onChange(next)
   }
-  const count = slides.length
+  const stepBy = (delta: number) => {
+    if (count === 0) return
+    const next = (safeIndex + delta + count) % count
+    const wraps = delta > 0 ? safeIndex === count - 1 : safeIndex === 0
+    scrollToSlide(next, wraps)
+    onChange(next)
+  }
   useEffect(() => {
-    if (count < 2 || paused) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    const timer = window.setTimeout(() => {
-      const next = (activeIndex + 1) % count
-      scrollToSlide(next)
-      onChange(next)
-    }, 2000)
-    return () => window.clearTimeout(timer)
-  }, [activeIndex, count, paused, onChange])
+    const track = trackRef.current
+    const slide = track?.children[safeIndex] as HTMLElement | undefined
+    if (!track || !slide) return
+    track.scrollTo({ left: slideOffset(track, slide), behavior: 'auto' })
+  }, [count])
   return (
     <section
       className="card-carousel"
+      aria-roledescription="carousel"
       aria-label="내 보유 카드"
-      onPointerDown={() => setPaused(true)}
-      onPointerUp={() => setPaused(false)}
-      onPointerCancel={() => setPaused(false)}
-      onPointerLeave={() => setPaused(false)}
+      tabIndex={count > 1 ? 0 : undefined}
+      aria-keyshortcuts={count > 1 ? 'ArrowLeft ArrowRight' : undefined}
+      onKeyDown={(event) => {
+        if (count < 2) return
+        if (event.key === 'ArrowRight') {
+          event.preventDefault()
+          stepBy(1)
+        } else if (event.key === 'ArrowLeft') {
+          event.preventDefault()
+          stepBy(-1)
+        }
+      }}
     >
       <div
-        className="carousel-track"
+        className={`carousel-track ${count < 2 ? 'single' : ''}`}
         ref={trackRef}
         onScroll={(event) => {
+          if (count < 2) return
           const track = event.currentTarget
           const center = track.scrollLeft + track.clientWidth / 2
           let nearest = 0
           let best = Infinity
           Array.from(track.children).forEach((child, index) => {
             const element = child as HTMLElement
-            const distance = Math.abs(element.offsetLeft + element.clientWidth / 2 - center)
+            const distance = Math.abs(slideOffset(track, element) + element.clientWidth / 2 - center)
             if (distance < best) {
               best = distance
               nearest = index
             }
           })
-          if (nearest !== activeIndex) onChange(nearest)
+          if (scrollLock.current !== null) {
+            if (nearest === scrollLock.current) scrollLock.current = null
+            return
+          }
+          if (nearest !== safeIndex) onChange(nearest)
         }}
       >
         {slides.map((slide, index) => (
           <div
-            className={`carousel-slide ${index === activeIndex ? 'current' : ''}`}
+            className={`carousel-slide ${index === safeIndex ? 'current' : ''}`}
             key={slide.key}
-            onClick={() => (index !== activeIndex ? goTo(index) : onOpen?.())}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${index + 1} / ${count}, ${slide.title}`}
+            onClick={() => (index !== safeIndex ? goTo(index) : onOpen?.())}
           >
-            {slide.isDongi ? (
-              <div className="carousel-card dongi">
-                <DongiImage variant="big" alt="동이 캐릭터 동백전 카드" className="home-balance-image" priority />
-                <span className="home-balance-overlay">
-                  <span className="home-balance-card-name">{slide.title}</span>
-                  <span className="home-balance-label">사용 가능 잔액</span>
-                  <strong>{slide.balanceWon != null ? formatWon(slide.balanceWon) : '잔액 확인 불가'}</strong>
-                </span>
-              </div>
-            ) : (
-              <div className={`carousel-card plain tone-${slide.tone ?? 0}`}>
-                <span className="plain-issuer">{slide.issuer}</span>
-                <strong>{slide.title}</strong>
-                <span className="plain-holder">{slide.holder ?? '프로필 정보 미등록'}</span>
-              </div>
-            )}
+            <div className="carousel-art">
+              <CardFaceView face={slide.face} title={slide.title} />
+            </div>
+            <div className="carousel-meta">
+              <b>{slide.title}</b>
+              <span>{slide.kindLabel}</span>
+              <span>{slide.statusLabel}</span>
+              {slide.detail && <strong>{slide.detail}</strong>}
+            </div>
           </div>
         ))}
       </div>
-      {slides.length > 1 && (
+      {count > 1 && (
         <div className="carousel-nav">
-          <button type="button" aria-label="이전 카드" disabled={activeIndex <= 0} onClick={() => goTo(activeIndex - 1)}><ChevronLeft size={18} /></button>
-          <div className="carousel-dots" role="tablist">
+          <button type="button" aria-label="이전 카드" onClick={() => stepBy(-1)}><ChevronLeft size={18} /></button>
+          <div className="carousel-dots" role="tablist" aria-label="카드 위치">
             {slides.map((slide, index) => (
               <button
                 key={slide.key}
                 type="button"
                 role="tab"
-                aria-selected={index === activeIndex}
+                aria-selected={index === safeIndex}
                 aria-label={`${index + 1}번째 카드: ${slide.title}`}
-                className={index === activeIndex ? 'on' : ''}
+                className={index === safeIndex ? 'on' : ''}
                 onClick={() => goTo(index)}
               />
             ))}
           </div>
-          <button type="button" aria-label="다음 카드" disabled={activeIndex >= slides.length - 1} onClick={() => goTo(activeIndex + 1)}><ChevronRight size={18} /></button>
+          <button type="button" aria-label="다음 카드" onClick={() => stepBy(1)}><ChevronRight size={18} /></button>
         </div>
       )}
     </section>
@@ -1280,61 +1544,38 @@ function CardManager({
   userCards,
   payments,
   benefits,
-  displayName,
   wallet,
   pendingCard,
-  actionMessage,
+  cardDesign,
   onBack,
   onToggle,
+  onRetry,
 }: {
+  onRetry: () => void
   products: CardProduct[]
   userCards: UserCard[]
   payments: PaymentRecord[]
   benefits: Record<string, BenefitRule[]>
-  displayName: string | null
   wallet: WalletBalance | null
   pendingCard: string
-  actionMessage: string
+  cardDesign: DongiImageVariant
   onBack: () => void
-  onToggle: (product: CardProduct) => Promise<void>
+  onToggle: (product: CardProduct, details?: CardRegistrationDetails) => Promise<void>
 }) {
   const [showAvailableProducts, setShowAvailableProducts] = useState(false)
   const [activeSlide, setActiveSlide] = useState(0)
   const activeProductIds = new Set(userCards.map((card) => card.product_id))
-  const connectedProducts = userCards.map((card) => ({
-    card,
-    product: products.find((item) => item.product_id === card.product_id),
-  }))
-  const dongiEntry = connectedProducts.find(({ product }) => product && isDongbaekProduct(product))
-  const dongiProduct = dongiEntry?.product ?? null
-  const slides: CardSlide[] = [
-    {
-      key: 'dongi',
-      title: dongiProduct?.product_name ?? '동백전 카드',
-      issuer: dongiProduct?.issuer ?? '부산시민플랫폼',
-      holder: displayName,
-      isDongi: true,
-      balanceWon: wallet?.balance_won ?? null,
-      card: dongiEntry?.card,
-      product: dongiProduct ?? undefined,
-      rules: dongiProduct ? benefits[dongiProduct.product_id] ?? [] : [],
-    },
-    ...connectedProducts
-      .filter(({ card }) => card.user_card_id !== dongiEntry?.card.user_card_id)
-      .map(({ card, product }, index): CardSlide => ({
-        key: card.user_card_id,
-        title: product?.product_name ?? card.product_id,
-        issuer: product?.issuer ?? '카드 상품 정보 없음',
-        holder: displayName,
-        isDongi: false,
-        tone: index % 4,
-        card,
-        product,
-        rules: benefits[card.product_id] ?? [],
-      })),
-  ]
-  const current = slides[Math.min(activeSlide, slides.length - 1)]
-  const availableProducts = products.filter((product) => !activeProductIds.has(product.product_id))
+  const slides = slidesForCards({
+    cards: userCards,
+    products,
+    designId: cardDesign,
+    balanceWon: wallet?.balance_won ?? null,
+    benefits,
+  })
+  const current = slides.length > 0 ? slides[((activeSlide % slides.length) + slides.length) % slides.length] : undefined
+  const availableProducts = registrableProducts(products).filter(
+    (product) => !activeProductIds.has(product.product_id),
+  )
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const getMonthlySpend = (userCardId: string) =>
@@ -1355,7 +1596,6 @@ function CardManager({
         onChange={setActiveSlide}
       />
       {pendingCard && <p className="card-action-status" role="status">카드 등록 상태를 변경하는 중입니다.</p>}
-      {actionMessage && <p className="card-action-success" role="status">{actionMessage}</p>}
       {current && (
         <section className="card-detail-panel" aria-live="polite">
           <header>
@@ -1363,7 +1603,7 @@ function CardManager({
               <b>{current.title}</b>
               <small>{current.issuer}</small>
             </div>
-            {current.card && current.product && !current.isDongi && (
+            {current.card && current.product && (
               <button
                 className="card-action-button secondary"
                 type="button"
@@ -1380,6 +1620,15 @@ function CardManager({
             )}
             {current.card && (
               <>
+                {current.card.card_last4 && (
+                  <div><dt>카드번호</dt><dd>•••• {current.card.card_last4}</dd></div>
+                )}
+                {current.card.expires_at && (
+                  <div><dt>유효기간</dt><dd>{current.card.expires_at.slice(5, 7)}/{current.card.expires_at.slice(2, 4)}</dd></div>
+                )}
+                {current.card.prev_month_spend_won != null && (
+                  <div><dt>전월실적</dt><dd>{current.card.prev_month_spend_won > 0 ? `${formatWon(current.card.prev_month_spend_won)} 이상` : '없음'}</dd></div>
+                )}
                 <div><dt>이번 달 결제</dt><dd>{formatWon(getMonthlySpend(current.card.user_card_id))}</dd></div>
                 <div>
                   <dt>남은 한도</dt>
@@ -1407,12 +1656,21 @@ function CardManager({
                 return (
                   <li key={rule.rule_id}>
                     <b>{rule.benefit_name ?? rule.benefit_type ?? '혜택'}</b>
+                    {rule.perf_threshold_won != null && rule.perf_threshold_won > 0 && (
+                      <small>전월실적 {formatWon(rule.perf_threshold_won)} 이상</small>
+                    )}
                     {caps.length > 0 && <small>{caps.join(' · ')}</small>}
                   </li>
                 )
               })}
             </ul>
-          ) : <p className="empty-state">등록된 혜택 정보가 없습니다.</p>}
+          ) : (
+            <p className="empty-state">
+              {current.product && benefits[current.product.product_id] === undefined
+                ? '혜택 정보를 불러오지 못했거나 아직 확인 중입니다.'
+                : '등록된 혜택 규칙이 없습니다.'}
+            </p>
+          )}
         </section>
       )}
       {!userCards.length && <p className="empty-state">현재 로그인 사용자에게 연결된 카드가 없습니다.</p>}      <button
@@ -1425,35 +1683,26 @@ function CardManager({
         {showAvailableProducts ? '카드 등록 목록 닫기' : '카드 등록'}
       </button>
       {showAvailableProducts && (
-        <>
-          <p className="list-label">등록할 카드 상품 {availableProducts.length}종</p>
-          <section className="card-list">
-            {availableProducts.map((product) => (
-              <div className="card-row" key={product.product_id}>
-                <div><b>{product.product_name}</b><small>{product.issuer ?? '카드사 정보 없음'} · {(benefits[product.product_id] ?? []).map((rule) => rule.benefit_name ?? rule.benefit_type ?? '혜택').join(', ') || '혜택 정보 없음'}</small></div>
-                <button
-                  className="card-action-button secondary"
-                  type="button"
-                  disabled={Boolean(pendingCard)}
-                  onClick={() => void onToggle(product)}
-                >
-                  등록
-                </button>
-              </div>
-            ))}
-            {!availableProducts.length && <p className="empty-state">등록 가능한 카드가 없습니다.</p>}
-          </section>
-        </>
+        <CardRegistrationPicker
+          products={availableProducts}
+          disabled={Boolean(pendingCard)}
+          benefitSummary={(product) =>
+            (benefits[product.product_id] ?? [])
+              .map((rule) => rule.benefit_name ?? rule.benefit_type ?? '혜택')
+              .join(', ') || '혜택 정보 없음'}
+          onRegister={(product, details) => void onToggle(product, details)}
+          onRetry={onRetry}
+        />
       )}
       <section className="benefit-guide">
         <div className="chart-heading"><div><b>카드별 받을 수 있는 혜택</b><small>카드 상품 혜택 정보</small></div><span className="guide-filter">카드 상품</span></div>
         <div className="benefit-table" role="table" aria-label="카드 상품 혜택표">
           <div className="benefit-table-head" role="row"><span>카드</span><span>혜택</span><span>카드사</span><span>보유</span></div>
-          {products.slice(0, 6).map((product, index) => (
+          {registrableProducts(products).map((product, index) => (
             <div className={`benefit-table-row ${activeProductIds.has(product.product_id) ? 'recommended' : ''}`} role="row" key={product.product_id}>
-              <b><i className={`table-dot ${['blue', 'green', 'orange', 'pink'][index % 4]}`} />{product.product_name}</b>
+              <b><i className={`table-dot ${['blue', 'green', 'orange', 'pink'][index % 4]}`} />{cardLabel(product.product_name)}</b>
               <span>{(benefits[product.product_id] ?? [])[0]?.benefit_name ?? (benefits[product.product_id] ?? [])[0]?.benefit_type ?? '—'}</span>
-              <span>{product.issuer ?? '—'}</span>
+              <span>{cardMeta(product)}</span>
               <strong>{activeProductIds.has(product.product_id) ? '보유' : '—'}</strong>
             </div>
           ))}
@@ -1485,8 +1734,7 @@ function RechargeScreen({
   const [amount, setAmount] = useState('30000')
   const [walletId, setWalletId] = useState(wallet?.wallets[0]?.wallet_id ?? '')
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const { showToast } = useToast()
   const requestRef = useRef<{
     amountWon: number
     walletId: string
@@ -1497,17 +1745,15 @@ function RechargeScreen({
   const submitTopUp = async () => {
     const amountWon = Number(amount)
     if (!Number.isSafeInteger(amountWon) || amountWon <= 0 || amountWon > 500_000) {
-      setError('충전 금액은 1원 이상 500,000원 이하로 입력해 주세요.')
+      showToast({ tone: 'info', message: '충전 금액은 1원 이상 500,000원 이하로 입력해 주세요.' })
       return
     }
     if (!wallet || !walletId) {
-      setError(walletError || '충전할 수 있는 활성 지갑이 없습니다.')
+      showToast({ tone: 'error', message: walletError || '충전할 수 있는 활성 지갑이 없습니다.' })
       return
     }
 
     setPending(true)
-    setError('')
-    setSuccess('')
     try {
       if (
         !requestRef.current ||
@@ -1526,11 +1772,12 @@ function RechargeScreen({
         wallet_id: walletId,
       })
       requestRef.current = null
-      setSuccess(
-        `${formatWon(topUp.amount_won)} 충전 완료 · 잔액 ${formatWon(topUp.balance_won)}`,
-      )
+      showToast({
+        tone: 'success',
+        message: `${formatWon(topUp.amount_won)} 충전 완료 · 잔액 ${formatWon(topUp.balance_won)}`,
+      })
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '충전을 완료하지 못했습니다.')
+      showToast({ tone: 'error', message: failureMessage(cause, '충전을 완료하지 못했습니다.') })
     } finally {
       setPending(false)
     }
@@ -1552,8 +1799,6 @@ function RechargeScreen({
           </label>
         )}
         <button className="primary-action" disabled={pending || !wallet || walletFallback} onClick={() => void submitTopUp()}>{pending ? '처리 중…' : walletFallback ? '현재 이용할 수 없습니다' : `${Number(amount || 0).toLocaleString('ko-KR')}원 충전`}</button>
-        {error && <p className="topup-error" role="alert">{error}</p>}
-        {success && <p className="topup-success" role="status">{success}</p>}
         <p className="recharge-note">{walletFallback ? '현재 잔액 정보를 확인할 수 없어 충전할 수 없습니다.' : '충전 및 잔액은 서비스 시뮬레이션 기준으로 표시됩니다.'}</p>
       </section>
       <section className="auto-charge"><div><b>잔액 부족 시 자동충전</b><small>자동충전은 지원하지 않습니다.</small></div><Toggle on={false} disabled label="자동충전 미지원" onChange={() => {}} /></section>
@@ -1595,7 +1840,7 @@ function ReportScreen({
   const benefitTotal = payments.reduce((sum, payment) => sum + (payment.awarded_benefit_won ?? 0), 0)
   const cards = new Map<string, { name: string; amount: number }>()
   for (const payment of payments) {
-    const name = payment.product_name ?? '카드 정보 없음'
+    const name = cardLabel(payment.product_name ?? '카드 정보 없음')
     const current = cards.get(payment.user_card_id) ?? { name, amount: 0 }
     current.amount += payment.awarded_benefit_won ?? 0
     cards.set(payment.user_card_id, current)
@@ -1635,12 +1880,34 @@ function ReportScreen({
   )
 }
 
+const ENROLLMENT_STATUS = /^(재학|휴학|졸업|제적|수료|자퇴)$/
+
+function studentIdentityMeta(card: UserIdentityCard) {
+  const parts = card.subtitle
+    .replace(/\s*\(데모\)\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(/\s*·\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const enrollment = parts.length > 1 && ENROLLMENT_STATUS.test(parts[parts.length - 1]) ? parts.pop() ?? '' : ''
+  return {
+    university: card.issuer_name,
+    name: card.holder_name,
+    details: parts.join(' · '),
+    enrollment,
+  }
+}
+
 function MyPlatform({
   profile,
   profileFallback,
   profileError,
   identityCards,
   identityCardError,
+  hasOnepassCard,
+  cardDesign,
+  onIssueOnepass,
   onSave,
   onBack,
 }: {
@@ -1649,6 +1916,9 @@ function MyPlatform({
   profileError: string
   identityCards: UserIdentityCard[]
   identityCardError: string
+  hasOnepassCard: boolean
+  cardDesign: DongiImageVariant
+  onIssueOnepass: () => void
   onSave: (payload: {
     display_name: string
     student_card_id: string | null
@@ -1666,11 +1936,13 @@ function MyPlatform({
   const [phoneNumber, setPhoneNumber] = useState(profile?.phone_number ?? '')
   const [address, setAddress] = useState(profile?.address ?? '')
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
   const [editingProfile, setEditingProfile] = useState(false)
+  const { showToast } = useToast()
   const studentIdentityCard = identityCards.find((card) => card.card_type === 'STUDENT')
   const civicIdentityCard = identityCards.find((card) => card.card_type !== 'STUDENT')
+  const studentMeta = studentIdentityCard ? studentIdentityMeta(studentIdentityCard) : null
+  const cardImage = ONEPASS_CARD_IMAGES[cardDesign]
+  const cardOrientation = cardImage.height > cardImage.width ? 'portrait' : 'landscape'
 
   useEffect(() => {
     setDisplayName(profile?.display_name ?? '')
@@ -1683,12 +1955,10 @@ function MyPlatform({
 
   const saveProfile = async () => {
     if (!displayName.trim()) {
-      setError('이름을 입력해 주세요.')
+      showToast({ tone: 'info', message: '이름을 입력해 주세요.' })
       return
     }
     setPending(true)
-    setError('')
-    setSaved(false)
     try {
       await onSave({
         display_name: displayName.trim(),
@@ -1698,9 +1968,9 @@ function MyPlatform({
         phone_number: phoneNumber.trim() || null,
         address: address.trim() || null,
       })
-      setSaved(true)
+      showToast({ tone: 'success', message: NOTICE.settingsSaved })
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : '프로필을 저장하지 못했습니다.')
+      showToast({ tone: 'error', message: failureMessage(cause, '프로필을 저장하지 못했습니다.') })
     } finally {
       setPending(false)
     }
@@ -1721,28 +1991,38 @@ function MyPlatform({
       <section className="identity-sections">
         <div className="citizen-auth-heading">
           <h2>부산시민 인증</h2>
-          <span>{civicIdentityCard ? '시민 정보 등록' : '정보 없음'}</span>
+          <span>{civicIdentityCard ? '시민 정보 등록' : '인증이 필요합니다'}</span>
         </div>
         <section className="identity-display" aria-labelledby="student-identity-title">
-          <h2 id="student-identity-title" className="sr-only">갈매기대학교 학생증</h2>
+          <h2 id="student-identity-title" className="sr-only">{studentIdentityCard?.title ?? '대학교 학생증'}</h2>
           {identityCardError && <p className="identity-card-error" role="status">{identityCardError}</p>}
-          <div className="identity-artwork student-id-artwork">
-            <DongiImage variant="big" alt="동이 캐릭터가 그려진 갈매기대학교 학생증" className="identity-artwork-image" />
-            {studentIdentityCard ? (
-              <div className="identity-artwork-copy">
-                <span className="student-id-university">{studentIdentityCard.issuer_name}</span>
-                <strong className="student-id-holder">{studentIdentityCard.holder_name}</strong>
-                <span className="student-id-details">{studentIdentityCard.subtitle.replace(/\s*\(데모\)\s*/gi, ' ').trim()}</span>
-              </div>
+          {hasOnepassCard && (
+            <div className={`identity-artwork student-id-artwork is-${cardOrientation}`}>
+              <DongiImage variant={cardDesign} alt="발급받은 원패스 카드 디자인의 학생증" className="identity-artwork-image" />
+            </div>
+          )}
+          <div className="student-id-meta">
+            {studentMeta ? (
+              <>
+                <span className="student-id-university">{studentMeta.university}</span>
+                <strong className="student-id-holder">{studentMeta.name}</strong>
+                {studentMeta.details && <span className="student-id-details">{studentMeta.details}</span>}
+                {studentMeta.enrollment && <span className="student-id-badge">{studentMeta.enrollment}</span>}
+              </>
             ) : (
-              <div className="identity-artwork-copy">
-                <span className="student-id-university">{profile?.university ?? '갈매기대학교'}</span>
-                <strong className="student-id-holder">{profile?.display_name ?? '학생증 정보 없음'}</strong>
-                <span className="student-id-details">{[profile?.department, profile?.student_card_id].filter(Boolean).join(' · ') || '학생 정보를 확인할 수 없습니다.'}</span>
-              </div>
+              <>
+                <span className="student-id-university">학생증 인증</span>
+                <strong className="student-id-holder">인증이 필요합니다</strong>
+                <span className="student-id-details">대학교 학생증 인증을 완료하면 학생증이 표시됩니다.</span>
+              </>
             )}
           </div>
-          <h3 className="student-id-caption">갈매기 대학교 학생증</h3>
+          {!hasOnepassCard && (
+            <div className="identity-issue-notice" role="status">
+              <span>아직 발급받은 원패스 카드가 없어요.</span>
+              <button type="button" className="primary-action" onClick={onIssueOnepass}>원패스 카드 발급받기</button>
+            </div>
+          )}
         </section>
       </section>
       {!editingProfile ? (
@@ -1774,8 +2054,6 @@ function MyPlatform({
             <label className="profile-field">주소<input value={address} maxLength={300} disabled={profileFallback} onChange={(event) => setAddress(event.target.value)} autoComplete="street-address" /></label>
           </div>
           <button className="primary-action" disabled={pending || profileFallback} onClick={() => void saveProfile()}>{pending ? '저장 중…' : profileFallback ? '현재 수정할 수 없습니다' : '프로필 저장'}</button>
-          {error && <p className="topup-error" role="alert">{error}</p>}
-          {saved && <p className="topup-success" role="status">프로필 정보를 저장했습니다.</p>}
         </section>
       )}
       <div className="settings-list"><div>원패스 카드&nbsp; · &nbsp;시민 생활 서비스</div><div>마케팅 및 혜택 알림 설정 · 미연결</div></div>
@@ -1818,9 +2096,9 @@ function QrPayScreen({
   const [recommending, setRecommending] = useState(false)
   const [selectedCardId, setSelectedCardId] = useState('')
   const [paying, setPaying] = useState(false)
-  const [payError, setPayError] = useState('')
   const payingRef = useRef(false)
   const requestIdRef = useRef<string | null>(null)
+  const { showToast } = useToast()
   const merchant = knownMerchant ?? fetchedMerchant
   const amountWon = Number(amount)
   const amountValid = Number.isInteger(amountWon) && amountWon > 0 && amountWon <= MAX_QR_PAY_AMOUNT_WON
@@ -1890,7 +2168,6 @@ function QrPayScreen({
     if (payingRef.current || !merchant || !selected || !amountValid) return
     payingRef.current = true
     setPaying(true)
-    setPayError('')
     requestIdRef.current ??= newRequestId()
     try {
       const result = await api.createPayment({
@@ -1918,14 +2195,11 @@ function QrPayScreen({
         benefitStatus: result.benefit_status ?? null,
         paidAt: result.event_at,
       })
+      showToast({ tone: 'success', message: NOTICE.paymentDone })
     } catch (cause) {
       payingRef.current = false
       setPaying(false)
-      setPayError(
-        cause instanceof Error
-          ? cause.message
-          : '결제를 완료하지 못했습니다. 결제 내역을 확인한 뒤 다시 시도해 주세요.',
-      )
+      showToast({ tone: 'error', message: failureMessage(cause, NOTICE.paymentFailed) })
     }
   }
 
@@ -1985,7 +2259,7 @@ function QrPayScreen({
                           onClick={() => selectCard(candidate.user_card_id)}
                         >
                           <span>
-                            <b>{candidate.product_name ?? '카드 상품'}{candidate.user_card_id === recommendation.recommended_user_card_id ? ' · 추천' : ''}</b>
+                            <b>{cardLabel(candidate.product_name ?? '카드 상품')}{candidate.user_card_id === recommendation.recommended_user_card_id ? ' · 추천' : ''}</b>
                             <small>{candidate.payable === false ? `결제 불가 (${candidate.payable_reason ?? '사용 조건 미충족'})` : '결제 가능'}</small>
                           </span>
                           <strong>{candidateBenefitLabel(candidate)}</strong>
@@ -1999,7 +2273,6 @@ function QrPayScreen({
             <small>{recommendationError || (userCards.length ? '금액을 입력하면 최적 결제 카드와 예상 혜택을 조회합니다.' : '내 카드 관리에서 카드를 연결해 주세요.')}</small>
           )}
         </div>
-        {payError && <p className="identity-card-error" role="alert">{payError}</p>}
         <button
           type="button"
           className="primary-action qr-pay-submit"

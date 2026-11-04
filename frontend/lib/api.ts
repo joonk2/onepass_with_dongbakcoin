@@ -1,4 +1,5 @@
-const API_BASE_PATH = 'https://onepass-with-dongbakcoin.onrender.com/api/v1'
+const API_BASE_PATH =
+  process.env.NEXT_PUBLIC_API_BASE_URL || 'https://onepass-with-dongbakcoin.onrender.com/api/v1'
 const AUTH_SESSION_STORAGE_KEY = 'onepass-auth-session'
 
 export type AuthSession = {
@@ -34,6 +35,16 @@ export type UserCard = {
   registered_ref?: string | null
   active_from?: string | null
   active_to?: string | null
+  card_last4?: string | null
+  prev_month_spend_won?: number | null
+}
+
+export type CardRegistrationDetails = {
+  card_number: string
+  card_cvc: string
+  expiry_month: number
+  expiry_year: number
+  prev_month_spend_won: number
 }
 
 export type Merchant = {
@@ -541,10 +552,10 @@ export const api = {
         body: JSON.stringify(payload),
       },
     ),
-  addUserCard: (userId: string, productId: string) =>
+  addUserCard: (userId: string, productId: string, details?: CardRegistrationDetails) =>
     request<UserCard>(`/users/${encodeURIComponent(userId)}/cards`, {
       method: 'POST',
-      body: JSON.stringify({ product_id: productId }),
+      body: JSON.stringify({ product_id: productId, ...details }),
     }),
   removeUserCard: (userId: string, userCardId: string) =>
     request<void>(

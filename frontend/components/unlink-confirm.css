@@ -1,0 +1,72 @@
+.unlink-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 18, 16, 0.46);
+}
+
+.unlink-confirm-card {
+  width: min(360px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px 20px 20px;
+  border-radius: 16px;
+  background: #fff;
+  text-align: center;
+}
+
+.unlink-dongi {
+  width: min(210px, 72%);
+  height: auto;
+}
+
+.unlink-confirm-card h2 {
+  margin: 0;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+  color: #171717;
+}
+
+.unlink-confirm-card p {
+  margin: 0 0 8px;
+  color: #5f5f5f;
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+.unlink-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.unlink-cancel,
+.unlink-ok {
+  min-height: 44px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.unlink-cancel {
+  border: 1px solid #ececec;
+  background: #fff;
+  color: #171717;
+}
+
+.unlink-ok {
+  border: 0;
+  background: #d0122d;
+  color: #fff;
+}
+
+.unlink-cancel:disabled,
+.unlink-ok:disabled {
+  opacity: 0.55;
+}

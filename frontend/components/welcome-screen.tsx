@@ -7,22 +7,22 @@ import DongiImage from '@/components/dongi-image'
 const cards = [
   {
     variant: 'big' as const,
-    title: 'OnePass 동백전',
+    title: '동이 찡긋',
     imageAlt: '동이 캐릭터가 그려진 OnePass 동백전 카드',
   },
   {
     variant: 'classic' as const,
-    title: 'OnePass 카드',
+    title: '강렬한 RRRRRRRed',
     imageAlt: '동이 캐릭터가 그려진 OnePass 카드',
   },
   {
     variant: 'daray' as const,
-    title: 'OnePass 혜택 카드',
+    title: '동이 다라이',
     imageAlt: '동이 캐릭터와 함께 보는 OnePass 혜택 안내',
   },
   {
     variant: 'rope' as const,
-    title: '동이 캐릭터 카드',
+    title: '동이 밧줄',
     imageAlt: '동이 캐릭터 소개 카드',
   },
 ]
@@ -59,9 +59,7 @@ export default function WelcomeScreen({
     ...cards,
     ...cards,
   ]
-  const cardWidth = viewportWidth < 700
-    ? viewportWidth * 0.72
-    : Math.min(420, viewportWidth * 0.5)
+  const cardWidth = viewportWidth
 
   const moveBy = useCallback((direction: -1 | 1) => {
     setActiveIndex((current) => (current + direction + cards.length) % cards.length)
@@ -102,7 +100,7 @@ export default function WelcomeScreen({
           <div>
             <span>ONEPASS 소식</span>
             <time dateTime="2026-11-02">2026.11.02</time>
-            <h1 id="welcome-news-title">신규가입자에게 카드를!</h1>
+            <h1 id="welcome-news-title">신규가입자에게 드리는 혜택!</h1>
           </div>
           <CreditCard size={22} aria-hidden="true" />
         </div>
@@ -137,7 +135,9 @@ export default function WelcomeScreen({
                   aria-label={`${card.title}`}
                   aria-hidden={Math.abs(cardIndex - trackPosition) > 1}
                 >
-                  <DongiImage variant={card.variant} alt={card.imageAlt} className="welcome-carousel-image" priority={cardIndex === cards.length} />
+                  <div className={`welcome-carousel-visual is-${card.variant}`}>
+                    <DongiImage variant={card.variant} alt={card.imageAlt} className="welcome-carousel-image" priority={cardIndex === cards.length} />
+                  </div>
                   <span>{card.title}</span>
                 </article>
               ))}
