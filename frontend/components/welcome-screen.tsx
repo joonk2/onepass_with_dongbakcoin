@@ -61,10 +61,29 @@ export default function WelcomeScreen({
   ]
   const cardWidth = viewportWidth
 
-  const moveBy = useCallback((direction: -1 | 1) => {
-    setActiveIndex((current) => (current + direction + cards.length) % cards.length)
-    setTrackPosition((current) => current + direction)
+
+
+  // 왼쪽 이동 (음수), 오른쪽이동 (양수) 반영
+  const moveBy = useCallback((d: number) => {
+    setActiveIndex((cur_idx) => {
+      let new_idx: number
+
+      if (d >= 0) {
+        new_idx = (cur_idx + d) % cards.length
+      } else {
+        let temp_d = Math.abs(d)
+        temp_d %= cards.length
+        new_idx = (cur_idx - temp_d + cards.length) % cards.length
+      }
+
+      return new_idx
+    })
+
+    setTrackPosition((current) => current + d)
   }, [])
+
+
+
 
   useEffect(() => {
     if (paused) return
